@@ -86,15 +86,28 @@ namespace SqlRelayServer
                         }
 
                         // Έλεγχος για διαθέσιμες υπηρεσίες SQL
-                        var availableService = RegisteredServices.Values
+                        var availableServices = RegisteredServices.Values
                             .Where(s => s.LastHeartbeat > DateTime.UtcNow.AddMinutes(-2))
-                            .FirstOrDefault();
+                            .ToList();
 
-                        if (availableService == null)
+                        if (availableServices.Count == 0)
                         {
                             context.Response.StatusCode = 503;
                             await context.Response.WriteAsync("No SQL services currently available");
                             return;
+                        }
+
+                        // Επιλογή συγκεκριμένου agent εάν έχει καθοριστεί
+                        ServiceInfo targetService;
+                        if (!string.IsNullOrEmpty(sqlRequest.ServiceId) &&
+                            availableServices.Any(s => s.ServiceId == sqlRequest.ServiceId))
+                        {
+                            targetService = availableServices.First(s => s.ServiceId == sqlRequest.ServiceId);
+                        }
+                        else
+                        {
+                            // Αν δεν καθορίστηκε κάποιος agent ή δεν υπάρχει, επιλέγουμε τον πρώτο διαθέσιμο
+                            targetService = availableServices.First();
                         }
 
                         // Δημιουργία μοναδικού ID για το query
@@ -106,13 +119,13 @@ namespace SqlRelayServer
                             Id = queryId,
                             Query = sqlRequest.Query,
                             Parameters = sqlRequest.Parameters,
-                            ServiceId = availableService.ServiceId,
+                            ServiceId = targetService.ServiceId,
                             CreatedAt = DateTime.UtcNow
                         };
 
                         PendingQueries.TryAdd(queryId, queryInfo);
 
-                        logger.LogInformation($"Added query {queryId} to pending queue for service {availableService.ServiceId}");
+                        logger.LogInformation($"Added query {queryId} to pending queue for service {targetService.ServiceId}");
 
                         // Περιμένουμε για το αποτέλεσμα (με timeout)
                         var startTime = DateTime.UtcNow;
@@ -177,21 +190,15 @@ namespace SqlRelayServer
                             .Select(s => new
                             {
                                 s.ServiceId,
+                                s.DisplayName,
+                                s.Description,
+                                s.Version,
+                                s.ServerInfo,
                                 s.LastHeartbeat,
                                 IsActive = true,
-                                 TimeSinceLastHeartbeat = (DateTime.UtcNow - s.LastHeartbeat).TotalSeconds
+                                TimeSinceLastHeartbeat = (DateTime.UtcNow - s.LastHeartbeat).TotalSeconds
                             })
                             .ToList();
-
-                        logger.LogInformation($"Active services: {activeServices.Count}");
-
-                        if (activeServices.Count == 0)
-                        {
-                            foreach (var service in RegisteredServices.Values)
-                            {
-                                logger.LogInformation($"Inactive service: {service.ServiceId}, Last heartbeat: {service.LastHeartbeat}, Seconds ago: {(DateTime.UtcNow - service.LastHeartbeat).TotalSeconds}");
-                            }
-                        }
 
                         context.Response.ContentType = "application/json";
                         await context.Response.WriteAsync(JsonConvert.SerializeObject(activeServices));
@@ -395,6 +402,10 @@ namespace SqlRelayServer
     public class ServiceInfo
     {
         public string ServiceId { get; set; }
+        public string DisplayName { get; set; }
+        public string Description { get; set; }
+        public string Version { get; set; }
+        public string ServerInfo { get; set; }
         public DateTime LastHeartbeat { get; set; }
     }
 
@@ -419,5 +430,6 @@ namespace SqlRelayServer
     {
         public string Query { get; set; }
         public object Parameters { get; set; }
+        public string ServiceId { get; set; } // Νέο πεδίο για επιλογή συγκεκριμένου agent
     }
 }

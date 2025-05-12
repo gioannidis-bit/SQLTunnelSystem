@@ -23,5 +23,9 @@
         public bool ShowParameters { get; set; }
         public string RelayServerUrl { get; set; } = "https://your-relay-server.com/api";
         public string ApiKey { get; set; } = "YOUR_SECURE_API_KEY";
+
+        // Νέα πεδία για υποστήριξη πολλαπλών agents
+        public string ServiceId { get; set; }
+        public SqlAgent SelectedAgent { get; set; }
     }
 }

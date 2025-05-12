@@ -69,5 +69,73 @@ namespace SqlTunnelWebClient.Services
     {
         public string RelayServerUrl { get; set; } = "https://localhost:7021/api";
         public string ApiKey { get; set; } = "YOUR_SECURE_API_KEY";
+        public string LastSelectedServiceId { get; set; } // Προσθήκη του τελευταίου επιλεγμένου agent
+    }
+
+    // Προσθήκη νέας κλάσης για το ιστορικό ερωτημάτων
+    public class QueryHistoryService
+    {
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly string _sessionKey = "SQLTunnelQueryHistory";
+        private readonly int _maxHistoryItems = 20;
+
+        public QueryHistoryService(IHttpContextAccessor httpContextAccessor)
+        {
+            _httpContextAccessor = httpContextAccessor;
+        }
+
+        public List<QueryHistoryItem> GetQueryHistory()
+        {
+            var context = _httpContextAccessor.HttpContext;
+            if (context != null && context.Session.TryGetValue(_sessionKey, out var sessionData))
+            {
+                try
+                {
+                    var json = System.Text.Encoding.UTF8.GetString(sessionData);
+                    return JsonConvert.DeserializeObject<List<QueryHistoryItem>>(json) ?? new List<QueryHistoryItem>();
+                }
+                catch
+                {
+                    return new List<QueryHistoryItem>();
+                }
+            }
+
+            return new List<QueryHistoryItem>();
+        }
+
+        public void AddQueryToHistory(QueryHistoryItem item)
+        {
+            var history = GetQueryHistory();
+
+            // Αφαίρεση τυχόν διπλών ερωτημάτων
+            history.RemoveAll(h => h.Query == item.Query && h.ServiceId == item.ServiceId);
+
+            // Προσθήκη του νέου ερωτήματος στην αρχή
+            history.Insert(0, item);
+
+            // Περιορισμός του μεγέθους του ιστορικού
+            if (history.Count > _maxHistoryItems)
+            {
+                history = history.Take(_maxHistoryItems).ToList();
+            }
+
+            // Αποθήκευση στο session
+            var context = _httpContextAccessor.HttpContext;
+            if (context != null)
+            {
+                var json = JsonConvert.SerializeObject(history);
+                var sessionData = System.Text.Encoding.UTF8.GetBytes(json);
+                context.Session.Set(_sessionKey, sessionData);
+            }
+        }
+    }
+
+    public class QueryHistoryItem
+    {
+        public string Query { get; set; }
+        public Dictionary<string, object> Parameters { get; set; }
+        public string ServiceId { get; set; }
+        public string ServiceName { get; set; }
+        public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 }

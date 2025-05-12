@@ -7,6 +7,49 @@
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/SqlTunnelWebClient.styles.css" asp-append-version="true" />
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.3.6/css/buttons.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+
+    <style>
+        /* Στυλ για τα φίλτρα στηλών */
+        #resultsTable thead tr:nth-child(2) th {
+            padding: 8px;
+        }
+
+        #resultsTable thead tr:nth-child(2) input {
+            width: 100%;
+            padding: 3px;
+            box-sizing: border-box;
+        }
+
+        /* Στυλ για τα κουμπιά εξαγωγής */
+        .dt-buttons .btn {
+            margin-right: 5px;
+        }
+
+        .dataTables_length {
+            margin-bottom: 15px;
+        }
+
+        .dataTables_filter {
+            margin-bottom: 15px;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        /* Διόρθωση στυλ για τα dropdown με τα εξαγωγής */
+        .dt-button-collection {
+            width: auto !important;
+            padding: 0.5rem 0 !important;
+        }
+
+            .dt-button-collection .dropdown-item {
+                padding: 0.25rem 1.5rem !important;
+            }
+    </style>
 </head>
 <body>
     <header>
@@ -45,5 +88,16 @@
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.3.6/js/dataTables.buttons.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.3.6/js/buttons.bootstrap5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.3.6/js/buttons.html5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.3.6/js/buttons.print.min.js"></script>
 </body>
 </html>

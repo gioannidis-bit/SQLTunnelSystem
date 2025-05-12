@@ -22,11 +22,46 @@ namespace SqlTunnelWebClient.Controllers
             _settingsService = settingsService;
         }
 
-        public IActionResult Index()
+        public async Task<IActionResult> Index(string serviceId)
         {
-            // Φόρτωση των αποθηκευμένων ρυθμίσεων
             var settings = _settingsService.GetSettings();
-            _logger.LogInformation($"Loaded settings - RelayServerUrl: {settings.RelayServerUrl}, ApiKey: {settings.ApiKey}");
+
+            var model = new SqlViewModel
+            {
+                RelayServerUrl = settings.RelayServerUrl,
+                ApiKey = settings.ApiKey,
+                ServiceId = serviceId // Προσθήκη του serviceId στο model
+            };
+
+            // Αν υπάρχει επιλεγμένος agent, φορτώνουμε τις πληροφορίες του
+            if (!string.IsNullOrEmpty(serviceId))
+            {
+                try
+                {
+                    var agents = await GetActiveAgents(settings.RelayServerUrl, settings.ApiKey);
+                    var selectedAgent = agents.FirstOrDefault(a => a.ServiceId == serviceId);
+
+                    if (selectedAgent != null)
+                    {
+                        model.SelectedAgent = selectedAgent;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error loading agent details");
+                }
+            }
+
+            return View(model);
+        }
+
+
+       
+        [HttpGet]
+        public async Task<IActionResult> Index()
+        {
+            // Κώδικας για προβολή χωρίς συγκεκριμένο agent
+            var settings = _settingsService.GetSettings();
 
             var model = new SqlViewModel
             {
@@ -35,6 +70,41 @@ namespace SqlTunnelWebClient.Controllers
             };
 
             return View(model);
+        }
+
+        [HttpGet("Sql/Agent/{serviceId}")]
+        public async Task<IActionResult> Agent(string serviceId)
+        {
+            // Κώδικας για προβολή με συγκεκριμένο agent
+            var settings = _settingsService.GetSettings();
+
+            var model = new SqlViewModel
+            {
+                RelayServerUrl = settings.RelayServerUrl,
+                ApiKey = settings.ApiKey,
+                ServiceId = serviceId
+            };
+
+            // Αν υπάρχει επιλεγμένος agent, φορτώνουμε τις πληροφορίες του
+            if (!string.IsNullOrEmpty(serviceId))
+            {
+                try
+                {
+                    var agents = await GetActiveAgents(settings.RelayServerUrl, settings.ApiKey);
+                    var selectedAgent = agents.FirstOrDefault(a => a.ServiceId == serviceId);
+
+                    if (selectedAgent != null)
+                    {
+                        model.SelectedAgent = selectedAgent;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error loading agent details");
+                }
+            }
+
+            return View("Index", model);
         }
 
         [HttpPost]
@@ -96,9 +166,16 @@ namespace SqlTunnelWebClient.Controllers
                     }
                 }
 
-                var result = await ExecuteSqlQuery(model.RelayServerUrl, model.ApiKey, model.Query, parameters);
+                // Αποστολή του serviceId στο ExecuteSqlQuery
+                var result = await ExecuteSqlQuery(model.RelayServerUrl, model.ApiKey, model.Query, parameters, model.ServiceId);
                 model.Result = result;
                 model.Error = null;
+
+                // Ανανέωση των πληροφοριών του agent αν είναι επιλεγμένος
+                if (!string.IsNullOrEmpty(model.ServiceId))
+                {
+                    return RedirectToAction("Agent", new { serviceId = model.ServiceId });
+                }
             }
             catch (Exception ex)
             {
@@ -129,26 +206,35 @@ namespace SqlTunnelWebClient.Controllers
             }
         }
 
-        private async Task<string> ExecuteSqlQuery(string serverUrl, string apiKey, string query, Dictionary<string, object> parameters)
+        private async Task<string> ExecuteSqlQuery(
+         string serverUrl,
+         string apiKey,
+         string query,
+         Dictionary<string, object> parameters,
+         string serviceId = null)
         {
             using (var httpClient = _clientFactory.CreateClient())
             {
                 // Ensure server URL ends with a slash
                 serverUrl = serverUrl.TrimEnd('/');
 
-                // Add headers
+                // Ρύθμιση των headers
                 httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
 
                 var request = new
                 {
                     Query = query,
-                    Parameters = parameters
+                    Parameters = parameters,
+                    ServiceId = serviceId // Προσθήκη του serviceId στο request
                 };
 
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                var response = await httpClient.PostAsync($"{serverUrl}/sql/execute", content);
+                var fullUrl = $"{serverUrl}/sql/execute";
+                _logger.LogInformation($"Sending request to: {fullUrl}, ServiceId: {serviceId}");
+
+                var response = await httpClient.PostAsync(fullUrl, content);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -157,6 +243,26 @@ namespace SqlTunnelWebClient.Controllers
                 }
 
                 return await response.Content.ReadAsStringAsync();
+            }
+        }
+
+        private async Task<List<SqlAgent>> GetActiveAgents(string relayServerUrl, string apiKey)
+        {
+            using (var httpClient = _clientFactory.CreateClient())
+            {
+                relayServerUrl = relayServerUrl.TrimEnd('/');
+                httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+
+                var response = await httpClient.GetAsync($"{relayServerUrl}/status");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    throw new Exception($"Server returned status {response.StatusCode}: {errorContent}");
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonConvert.DeserializeObject<List<SqlAgent>>(content) ?? new List<SqlAgent>();
             }
         }
 

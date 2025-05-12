@@ -34,6 +34,11 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapControllerRoute(
+    name: "sqlAgent",
+    pattern: "Sql/Agent/{serviceId}",
+    defaults: new { controller = "Sql", action = "Agent" });
+
+app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
 

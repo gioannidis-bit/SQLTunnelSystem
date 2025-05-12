@@ -28,6 +28,10 @@ namespace SQLTunnelService
         private readonly string _secretKey;
         private readonly string _connectionString;
         private readonly int _pollingIntervalMs;
+        private readonly string _displayName;
+        private readonly string _description;
+        private readonly string _version;
+        private readonly string _serverInfo;
 
         public SQLTunnelService()
         {
@@ -40,7 +44,35 @@ namespace SQLTunnelService
             _connectionString = ConfigurationManager.AppSettings["SqlConnectionString"] ?? "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrongPassword;";
             _pollingIntervalMs = int.Parse(ConfigurationManager.AppSettings["PollingIntervalMs"] ?? "5000");
 
+            // Νέες ρυθμίσεις
+            _displayName = ConfigurationManager.AppSettings["DisplayName"] ?? Environment.MachineName;
+            _description = ConfigurationManager.AppSettings["Description"] ?? "SQL Tunnel Service";
+            _version = ConfigurationManager.AppSettings["Version"] ?? "1.0";
+
+            // Λήψη πληροφοριών για τον SQL Server
+            _serverInfo = GetSqlServerInfo();
+
             ConfigureLogging();
+        }
+
+        private string GetSqlServerInfo()
+        {
+            try
+            {
+                using (var connection = new SqlConnection(_connectionString))
+                {
+                    connection.Open();
+                    using (var command = new SqlCommand("SELECT @@VERSION", connection))
+                    {
+                        return command.ExecuteScalar()?.ToString() ?? "Unknown";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Failed to get SQL Server info");
+                return "Unknown";
+            }
         }
 
         private string GenerateRandomKey()
@@ -84,6 +116,39 @@ namespace SQLTunnelService
             Logger.Info("SQL Tunnel Service stopped");
         }
 
+        private async Task SendHeartbeat(HttpClient httpClient, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var heartbeatData = new
+                {
+                    DisplayName = _displayName,
+                    Description = _description,
+                    Version = _version,
+                    ServerInfo = _serverInfo
+                };
+
+                var json = JsonConvert.SerializeObject(heartbeatData);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                var response = await httpClient.PostAsync($"{_relayServerUrl}/services/heartbeat", content, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    Logger.Debug("Heartbeat sent successfully");
+                }
+                else
+                {
+                    Logger.Warn($"Failed to send heartbeat. Status: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Error sending heartbeat");
+            }
+        }
+
+
         private async Task StartPollingForQueries(CancellationToken cancellationToken)
         {
             // Μόνο για ανάπτυξη - ΜΗΝ το χρησιμοποιείτε σε παραγωγή
@@ -99,10 +164,23 @@ namespace SQLTunnelService
 
                 Logger.Info("Starting to poll for queries");
 
+                // Αρχικό heartbeat
+                await SendHeartbeat(httpClient, cancellationToken);
+
+                var lastHeartbeatTime = DateTime.UtcNow;
+
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     try
                     {
+                        // Στέλνουμε heartbeat κάθε 30 δευτερόλεπτα
+                        if ((DateTime.UtcNow - lastHeartbeatTime).TotalSeconds >= 30)
+                        {
+                            await SendHeartbeat(httpClient, cancellationToken);
+                            lastHeartbeatTime = DateTime.UtcNow;
+                        }
+
+
                         // Έλεγχος για νέα αιτήματα SQL
                         Logger.Info($"Checking for pending queries at {_relayServerUrl}/queries/pending");
                         var response = await httpClient.GetAsync($"{_relayServerUrl}/queries/pending", cancellationToken);

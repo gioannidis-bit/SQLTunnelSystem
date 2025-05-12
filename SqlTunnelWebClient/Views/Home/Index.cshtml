@@ -1,8 +1,177 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+﻿@using Newtonsoft.Json
+@model SqlTunnelWebClient.Models.AgentViewModel
+@inject SqlTunnelWebClient.Services.SettingsService SettingsService
+
+@{
+    ViewData["Title"] = "SQL Tunnel - Connected Agents";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="container">
+    <h1 class="my-4">Connected SQL Agents</h1>
+
+    @if (TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            @TempData["SuccessMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @TempData["ErrorMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>SQL Agents</h5>
+                    <button id="refreshAgents" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body">
+                    @if (Model.Agents == null || !Model.Agents.Any())
+                    {
+                        <div class="alert alert-warning">
+                            No SQL agents are currently connected.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Status</th>
+                                        <th>Name</th>
+                                        <th>Description</th>
+                                        <th>Version</th>
+                                        <th>Last Heartbeat</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var agent in Model.Agents)
+                                    {
+                                        <tr>
+                                            <td>
+                                                @if (agent.IsActive)
+                                                {
+                                                    <span class="badge bg-success">Online</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-danger">Offline</span>
+                                                }
+                                            </td>
+                                            <td>@agent.DisplayName</td>
+                                            <td>@agent.Description</td>
+                                            <td>@agent.Version</td>
+                                            <td title="@agent.LastHeartbeat.ToString("yyyy-MM-dd HH:mm:ss")">
+                                                @(agent.TimeSinceLastHeartbeat < 60
+                                                    ? $"{Math.Round(agent.TimeSinceLastHeartbeat)} seconds ago"
+                                                    : $"{Math.Round(agent.TimeSinceLastHeartbeat / 60)} minutes ago")
+                                            </td>
+                                            <td>
+                                                <a href="@Url.Action("Agent", "Sql", new { serviceId = agent.ServiceId })"
+                                                   class="btn btn-sm btn-primary">
+                                                    Query
+                                                </a>
+                                                <button type="button" class="btn btn-sm btn-info"
+                                                        data-bs-toggle="modal" data-bs-target="#agentInfoModal"
+                                                        data-agent-id="@agent.ServiceId">
+                                                    Info
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
+<!-- Agent Info Modal -->
+<div class="modal fade" id="agentInfoModal" tabindex="-1" aria-labelledby="agentInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="agentInfoModalLabel">Agent Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="agentDetailsContent">
+                    <!-- Το περιεχόμενο θα φορτωθεί με JavaScript -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function() {
+            // Refresh agents
+            $('#refreshAgents').click(function() {
+                window.location.reload();
+            });
+
+            // Show agent details in modal
+            $('#agentInfoModal').on('show.bs.modal', function (event) {
+                const button = $(event.relatedTarget);
+                const agentId = button.data('agent-id');
+                const agents = @Html.Raw(JsonConvert.SerializeObject(Model.Agents));
+
+                const agent = agents.find(a => a.serviceId === agentId);
+                if (agent) {
+                    let content = `
+                        <div class="mb-3">
+                            <h6>Server Information</h6>
+                            <pre class="bg-light p-3">${agent.serverInfo}</pre>
+                        </div>
+                        <table class="table table-striped">
+                            <tr>
+                                <th>Service ID:</th>
+                                <td>${agent.serviceId}</td>
+                            </tr>
+                            <tr>
+                                <th>Display Name:</th>
+                                <td>${agent.displayName}</td>
+                            </tr>
+                            <tr>
+                                <th>Description:</th>
+                                <td>${agent.description}</td>
+                            </tr>
+                            <tr>
+                                <th>Version:</th>
+                                <td>${agent.version}</td>
+                            </tr>
+                            <tr>
+                                <th>Last Heartbeat:</th>
+                                <td>${new Date(agent.lastHeartbeat).toLocaleString()}</td>
+                            </tr>
+                            <tr>
+                                <th>Status:</th>
+                                <td>${agent.isActive ? '<span class="badge bg-success">Online</span>' : '<span class="badge bg-danger">Offline</span>'}</td>
+                            </tr>
+                        </table>
+                    `;
+
+                    $('#agentDetailsContent').html(content);
+                }
+            });
+        });
+    </script>
+}
