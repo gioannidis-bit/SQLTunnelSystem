@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using SqlTunnelWebClient.Models;
+using SqlTunnelWebClient.Services;
 using System.Text;
 
 namespace SqlTunnelWebClient.Controllers
@@ -9,16 +10,59 @@ namespace SqlTunnelWebClient.Controllers
     {
         private readonly ILogger<SqlController> _logger;
         private readonly IHttpClientFactory _clientFactory;
+        private readonly SettingsService _settingsService;
 
-        public SqlController(ILogger<SqlController> logger, IHttpClientFactory clientFactory)
+        public SqlController(
+            ILogger<SqlController> logger,
+            IHttpClientFactory clientFactory,
+            SettingsService settingsService)
         {
             _logger = logger;
             _clientFactory = clientFactory;
+            _settingsService = settingsService;
         }
 
         public IActionResult Index()
         {
-            return View(new SqlViewModel());
+            // Φόρτωση των αποθηκευμένων ρυθμίσεων
+            var settings = _settingsService.GetSettings();
+            _logger.LogInformation($"Loaded settings - RelayServerUrl: {settings.RelayServerUrl}, ApiKey: {settings.ApiKey}");
+
+            var model = new SqlViewModel
+            {
+                RelayServerUrl = settings.RelayServerUrl,
+                ApiKey = settings.ApiKey
+            };
+
+            return View(model);
+        }
+
+        [HttpPost]
+        public IActionResult SaveSettings(SqlViewModel model)
+        {
+            try
+            {
+                _logger.LogInformation($"Saving settings - RelayServerUrl: {model.RelayServerUrl}, ApiKey: {model.ApiKey}");
+
+                // Αποθήκευση των ρυθμίσεων
+                _settingsService.SaveSettings(new ClientSettings
+                {
+                    RelayServerUrl = model.RelayServerUrl,
+                    ApiKey = model.ApiKey
+                });
+
+                // Εμφάνιση μηνύματος επιτυχίας
+                TempData["SuccessMessage"] = "Settings saved successfully!";
+
+                _logger.LogInformation("Settings saved successfully");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving settings");
+                TempData["ErrorMessage"] = $"Error saving settings: {ex.Message}";
+            }
+
+            return RedirectToAction("Index");
         }
 
         [HttpPost]
@@ -26,6 +70,13 @@ namespace SqlTunnelWebClient.Controllers
         {
             try
             {
+                // Αποθήκευση των ρυθμίσεων
+                _settingsService.SaveSettings(new ClientSettings
+                {
+                    RelayServerUrl = model.RelayServerUrl,
+                    ApiKey = model.ApiKey
+                });
+
                 if (string.IsNullOrWhiteSpace(model.Query))
                 {
                     model.Error = "Please enter a SQL query";
@@ -128,6 +179,6 @@ namespace SqlTunnelWebClient.Controllers
                 model.Parameters.RemoveAt(index);
             }
             return View("Index", model);
-        }
+        }      
     }
 }

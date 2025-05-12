@@ -1,15 +1,43 @@
 ﻿@using Newtonsoft.Json
 
 @model SqlTunnelWebClient.Models.SqlViewModel
+@inject SqlTunnelWebClient.Services.SettingsService SettingsService
 
 @{
     ViewData["Title"] = "SQL Query Executor";
+    var settings = SettingsService.GetSettings();
 }
+
 
 <div class="container">
     <h1 class="my-4">SQL Query Executor</h1>
 
-    <form asp-action="ExecuteQuery" method="post">
+
+    @if (TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            @TempData["SuccessMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @TempData["ErrorMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    <!-- Χρήσιμο για αποσφαλμάτωση, αφαιρέστε σε παραγωγή -->
+    <div class="alert alert-info mb-3">
+        <strong>Debug info:</strong> Current settings from cookie:
+        RelayServerUrl: @settings.RelayServerUrl,
+        ApiKey: @settings.ApiKey
+    </div>
+
+    <!-- Φόρμα αποθήκευσης ρυθμίσεων -->
+    <form asp-action="SaveSettings" method="post">
         <div class="card mb-4">
             <div class="card-header">
                 <h5>Connection Settings</h5>
@@ -22,12 +50,27 @@
                     </div>
                     <div class="col-md-6 mb-3">
                         <label asp-for="ApiKey" class="form-label">API Key:</label>
-                        <input asp-for="ApiKey" class="form-control" type="password" />
+                        <input asp-for="ApiKey" class="form-control" />
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-12 text-end">
+                        <button type="submit" class="btn btn-secondary">
+                            <i class="bi bi-save"></i> Save Settings
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
+    </form>
 
+
+
+    <form asp-action="ExecuteQuery" method="post">
+
+        <input type="hidden" asp-for="RelayServerUrl" />
+        <input type="hidden" asp-for="ApiKey" />  
+      
         <div class="card mb-4">
             <div class="card-header">
                 <h5>SQL Query</h5>
@@ -126,6 +169,8 @@
         </div>
     }
 </div>
+
+
 
 @section Scripts {
     <script>
