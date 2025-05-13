@@ -1,0 +1,16 @@
+[Unit]
+Description=SQL Tunnel Service
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/path/to/SQLTunnelService
+WorkingDirectory=/path/to
+User=yourusername
+Restart=always
+RestartSec=10
+SyslogIdentifier=sqltunnel
+Environment=DOTNET_ENVIRONMENT=Production
+
+[Install]
+WantedBy=multi-user.target

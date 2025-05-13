@@ -1,0 +1,24 @@
+# .NET Core build folders
+bin/
+obj/
+
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.sln.docstates
+
+# Logs
+logs/
+
+# Local settings
+appsettings.Development.json
+
+# Temporary files
+*.tmp
+*.log
+
+# Docker files
+.dockerignore
+Dockerfile
+docker-compose*

@@ -29,6 +29,14 @@ namespace SqlTunnelWebClient.Controllers
             try
             {
                 var settings = _settingsService.GetSettings();
+
+                if (string.IsNullOrEmpty(settings.RelayServerUrl))
+                {
+                    TempData["ErrorMessage"] = "Relay Server URL is not configured. Please go to SQL Query page and configure the connection settings.";
+                    return View(model);
+                }
+
+                _logger.LogInformation($"Using Relay Server URL: {settings.RelayServerUrl}");
                 var agents = await GetActiveAgents(settings.RelayServerUrl, settings.ApiKey);
                 model.Agents = agents;
             }

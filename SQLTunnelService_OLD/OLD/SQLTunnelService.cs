@@ -33,26 +33,96 @@ namespace SQLTunnelService
         private readonly string _version;
         private readonly string _serverInfo;
 
+        private readonly ServiceSettings _settings;
+
         public SQLTunnelService()
         {
+            // Ρυθμίσεις του service
             ServiceName = "SQLTunnelService";
+            CanStop = true;
+            CanPauseAndContinue = false;
+            AutoLog = true;
 
-            // Φόρτωση ρυθμίσεων από το app.config
-            _relayServerUrl = ConfigurationManager.AppSettings["RelayServerUrl"] ?? "https://your-relay-server.com/api";
-            _serviceId = ConfigurationManager.AppSettings["ServiceId"] ?? Guid.NewGuid().ToString();
-            _secretKey = ConfigurationManager.AppSettings["SecretKey"] ?? GenerateRandomKey();
-            _connectionString = ConfigurationManager.AppSettings["SqlConnectionString"] ?? "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrongPassword;";
-            _pollingIntervalMs = int.Parse(ConfigurationManager.AppSettings["PollingIntervalMs"] ?? "5000");
+            // Φόρτωση ρυθμίσεων από JSON αρχείο
+            _settings = LoadSettings();
 
-            // Νέες ρυθμίσεις
-            _displayName = ConfigurationManager.AppSettings["DisplayName"] ?? Environment.MachineName;
-            _description = ConfigurationManager.AppSettings["Description"] ?? "SQL Tunnel Service";
-            _version = ConfigurationManager.AppSettings["Version"] ?? "1.0";
+            // Ορισμός βασικών ιδιοτήτων
+            _relayServerUrl = _settings.RelayServerUrl;
+            _serviceId = _settings.ServiceId;
+            _secretKey = _settings.SecretKey;
+            _connectionString = _settings.SqlConnectionString;
+            _pollingIntervalMs = _settings.PollingIntervalMs;
+            _displayName = _settings.DisplayName;
+            _description = _settings.Description;
+            _version = _settings.Version;
 
             // Λήψη πληροφοριών για τον SQL Server
             _serverInfo = GetSqlServerInfo();
 
             ConfigureLogging();
+        }
+
+        private ServiceSettings LoadSettings()
+        {
+            string settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+            if (File.Exists(settingsPath))
+            {
+                try
+                {
+                    string json = File.ReadAllText(settingsPath);
+                    return JsonConvert.DeserializeObject<ServiceSettings>(json) ?? CreateDefaultSettings();
+                }
+                catch (Exception ex)
+                {
+                    // Σε περίπτωση σφάλματος, δημιουργούμε προεπιλεγμένες ρυθμίσεις
+                    Console.WriteLine($"Error loading settings: {ex.Message}");
+                    return CreateDefaultSettings();
+                }
+            }
+            else
+            {
+                // Αν δεν υπάρχει το αρχείο, δημιουργούμε προεπιλεγμένες ρυθμίσεις
+                var defaultSettings = CreateDefaultSettings();
+                try
+                {
+                    // Αποθηκεύουμε τις προεπιλεγμένες ρυθμίσεις για μελλοντική χρήση
+                    string json = JsonConvert.SerializeObject(defaultSettings, Formatting.Indented);
+                    File.WriteAllText(settingsPath, json);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error saving default settings: {ex.Message}");
+                }
+                return defaultSettings;
+            }
+        }
+
+        private ServiceSettings CreateDefaultSettings()
+        {
+            return new ServiceSettings
+            {
+                RelayServerUrl = "http://192.168.14.121:5175/api",
+                ServiceId = "sql-service-01",
+                SecretKey = @"\ql4CkI!{sI\W[*_1x]{A+Gw[vw+A\ti",
+                SqlConnectionString = "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrongPassword;",
+                PollingIntervalMs = 5000,
+                DisplayName = "SQL Tunnel Service",
+                Description = "SQL Server Tunnel",
+                Version = "1.0.0"
+            };
+        }
+
+        // Κλάση για τις ρυθμίσεις
+        public class ServiceSettings
+        {
+            public string RelayServerUrl { get; set; }
+            public string ServiceId { get; set; }
+            public string SecretKey { get; set; }
+            public string SqlConnectionString { get; set; }
+            public int PollingIntervalMs { get; set; }
+            public string DisplayName { get; set; }
+            public string Description { get; set; }
+            public string Version { get; set; }
         }
 
         private string GetSqlServerInfo()
@@ -130,6 +200,8 @@ namespace SQLTunnelService
 
                 var json = JsonConvert.SerializeObject(heartbeatData);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                Logger.Info($"Sending heartbeat to {_relayServerUrl}/services/heartbeat with data: {json}");
 
                 var response = await httpClient.PostAsync($"{_relayServerUrl}/services/heartbeat", content, cancellationToken);
 

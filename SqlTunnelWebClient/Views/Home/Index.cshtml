@@ -1,4 +1,5 @@
-﻿@using Newtonsoft.Json
+﻿@using System.Net
+@using Newtonsoft.Json
 @model SqlTunnelWebClient.Models.AgentViewModel
 @inject SqlTunnelWebClient.Services.SettingsService SettingsService
 
@@ -78,7 +79,7 @@
                                                     : $"{Math.Round(agent.TimeSinceLastHeartbeat / 60)} minutes ago")
                                             </td>
                                             <td>
-                                                <a href="@Url.Action("Agent", "Sql", new { serviceId = agent.ServiceId })"
+                                                <a href="@Url.Action("Agent", "Sql", new { serviceId = Uri.EscapeDataString(agent.ServiceId) })"
                                                    class="btn btn-sm btn-primary">
                                                     Query
                                                 </a>

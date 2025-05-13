@@ -22,7 +22,8 @@ namespace SqlTunnelWebClient.Controllers
             _settingsService = settingsService;
         }
 
-        public async Task<IActionResult> Index(string serviceId)
+        [HttpGet]
+        public async Task<IActionResult> Index(string serviceId = null)
         {
             var settings = _settingsService.GetSettings();
 
@@ -30,10 +31,9 @@ namespace SqlTunnelWebClient.Controllers
             {
                 RelayServerUrl = settings.RelayServerUrl,
                 ApiKey = settings.ApiKey,
-                ServiceId = serviceId // Προσθήκη του serviceId στο model
+                ServiceId = serviceId
             };
 
-            // Αν υπάρχει επιλεγμένος agent, φορτώνουμε τις πληροφορίες του
             if (!string.IsNullOrEmpty(serviceId))
             {
                 try
@@ -55,23 +55,7 @@ namespace SqlTunnelWebClient.Controllers
             return View(model);
         }
 
-
-       
-        [HttpGet]
-        public async Task<IActionResult> Index()
-        {
-            // Κώδικας για προβολή χωρίς συγκεκριμένο agent
-            var settings = _settingsService.GetSettings();
-
-            var model = new SqlViewModel
-            {
-                RelayServerUrl = settings.RelayServerUrl,
-                ApiKey = settings.ApiKey
-            };
-
-            return View(model);
-        }
-
+     
         [HttpGet("Sql/Agent/{serviceId}")]
         public async Task<IActionResult> Agent(string serviceId)
         {
@@ -174,7 +158,20 @@ namespace SqlTunnelWebClient.Controllers
                 // Ανανέωση των πληροφοριών του agent αν είναι επιλεγμένος
                 if (!string.IsNullOrEmpty(model.ServiceId))
                 {
-                    return RedirectToAction("Agent", new { serviceId = model.ServiceId });
+                    try
+                    {
+                        var agents = await GetActiveAgents(model.RelayServerUrl, model.ApiKey);
+                        var selectedAgent = agents.FirstOrDefault(a => a.ServiceId == model.ServiceId);
+
+                        if (selectedAgent != null)
+                        {
+                            model.SelectedAgent = selectedAgent;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error refreshing agent details");
+                    }
                 }
             }
             catch (Exception ex)

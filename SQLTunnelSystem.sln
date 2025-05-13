@@ -1,13 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.13.35919.96 d17.13
+VisualStudioVersion = 17.13.35919.96
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SQLTunnelService", "SQLTunnelService\SQLTunnelService.csproj", "{39419E11-B79A-48E3-A78B-CB06C9431AE7}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlRelayServer", "SqlRelayServer\SqlRelayServer.csproj", "{E48112F0-4F07-4287-9C4A-F10E2A5F0256}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlTunnelWebClient", "SqlTunnelWebClient\SqlTunnelWebClient.csproj", "{E877D217-EDC9-44D9-97C1-20742AFDF995}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SQLTunnelService", "SQLTunnelService\SQLTunnelService.csproj", "{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,10 +15,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{39419E11-B79A-48E3-A78B-CB06C9431AE7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{39419E11-B79A-48E3-A78B-CB06C9431AE7}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{39419E11-B79A-48E3-A78B-CB06C9431AE7}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{39419E11-B79A-48E3-A78B-CB06C9431AE7}.Release|Any CPU.Build.0 = Release|Any CPU
 		{E48112F0-4F07-4287-9C4A-F10E2A5F0256}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{E48112F0-4F07-4287-9C4A-F10E2A5F0256}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E48112F0-4F07-4287-9C4A-F10E2A5F0256}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -27,6 +23,10 @@ Global
 		{E877D217-EDC9-44D9-97C1-20742AFDF995}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E877D217-EDC9-44D9-97C1-20742AFDF995}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E877D217-EDC9-44D9-97C1-20742AFDF995}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

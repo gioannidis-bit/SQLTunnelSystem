@@ -1,5 +1,4 @@
-﻿// Δημιουργήστε ένα νέο αρχείο Services/SettingsService.cs
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 
 namespace SqlTunnelWebClient.Services
@@ -67,8 +66,8 @@ namespace SqlTunnelWebClient.Services
 
     public class ClientSettings
     {
-        public string RelayServerUrl { get; set; } = "https://localhost:7021/api";
-        public string ApiKey { get; set; } = "YOUR_SECURE_API_KEY";
+        public string RelayServerUrl { get; set; } = "http://192.168.14.121:5175/api";
+        public string ApiKey { get; set; } = "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
         public string LastSelectedServiceId { get; set; } // Προσθήκη του τελευταίου επιλεγμένου agent
     }
 

@@ -230,16 +230,36 @@ namespace SqlRelayServer
 
                         var serviceId = context.Request.Headers["X-Service-ID"].ToString();
 
+                        // Διάβασμα των επιπλέον πληροφοριών από το σώμα του request
+                        string requestBody;
+                        using (var reader = new StreamReader(context.Request.Body))
+                        {
+                            requestBody = await reader.ReadToEndAsync();
+                        }
+
+                        var heartbeatData = JsonConvert.DeserializeObject<dynamic>(requestBody);
+
                         // Ενημέρωση ή προσθήκη της υπηρεσίας
                         RegisteredServices.AddOrUpdate(
                             serviceId,
-                            id => new ServiceInfo
-                            {
-                                ServiceId = id,
-                                LastHeartbeat = DateTime.UtcNow
-                            },
+                                   id => new ServiceInfo
+                                   {
+                                       ServiceId = id,
+                                       DisplayName = heartbeatData?.DisplayName ?? id,
+                                       Description = heartbeatData?.Description ?? "",
+                                       Version = heartbeatData?.Version ?? "1.0",
+                                       ServerInfo = heartbeatData?.ServerInfo ?? "",
+                                       LastHeartbeat = DateTime.UtcNow
+                                   },
                             (id, existing) => {
                                 existing.LastHeartbeat = DateTime.UtcNow;
+                                if (heartbeatData != null)
+                                {
+                                    existing.DisplayName = heartbeatData.DisplayName ?? existing.DisplayName;
+                                    existing.Description = heartbeatData.Description ?? existing.Description;
+                                    existing.Version = heartbeatData.Version ?? existing.Version;
+                                    existing.ServerInfo = heartbeatData.ServerInfo ?? existing.ServerInfo;
+                                }
                                 return existing;
                             });
 
