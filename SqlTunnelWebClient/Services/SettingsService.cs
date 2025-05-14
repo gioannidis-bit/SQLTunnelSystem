@@ -66,7 +66,7 @@ namespace SqlTunnelWebClient.Services
 
     public class ClientSettings
     {
-        public string RelayServerUrl { get; set; } = "http://192.168.14.121:5175/api";
+        public string RelayServerUrl { get; set; } = "http://hit.com.gr:5175/api";
         public string ApiKey { get; set; } = "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
         public string LastSelectedServiceId { get; set; } // Προσθήκη του τελευταίου επιλεγμένου agent
     }
