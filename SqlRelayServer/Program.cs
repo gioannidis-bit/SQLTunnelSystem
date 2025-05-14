@@ -13,6 +13,8 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using System.Data;
+using System.Net;
 
 namespace SqlRelayServer
 {
@@ -31,6 +33,16 @@ namespace SqlRelayServer
                 });
     }
 
+    public class QueryResultInfo
+    {
+        public string QueryId { get; set; }
+        public string Query { get; set; }
+        public string Result { get; set; }
+        public string Error { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string ClientEndPoint { get; set; }
+    }
+
     public class Startup
     {
         private readonly IConfiguration _configuration;
@@ -46,6 +58,10 @@ namespace SqlRelayServer
         // Αποθήκευση των αποτελεσμάτων των SQL queries
         private static readonly ConcurrentDictionary<string, QueryResult> QueryResults = new ConcurrentDictionary<string, QueryResult>();
 
+        // Αποθήκευση των τελευταίων αποτελεσμάτων ερωτημάτων
+        private static readonly ConcurrentDictionary<string, QueryResultInfo> RecentQueryResults =
+      new ConcurrentDictionary<string, QueryResultInfo>(StringComparer.OrdinalIgnoreCase);
+
         // Αποθήκευση των εγγεγραμμένων SQL services
         private static readonly ConcurrentDictionary<string, ServiceInfo> RegisteredServices = new ConcurrentDictionary<string, ServiceInfo>();
 
@@ -58,14 +74,32 @@ namespace SqlRelayServer
             services.AddHttpClient();
 
             // Φόρτωση των ρυθμίσεων του TDS Listener από το αρχείο ρυθμίσεων
-            services.Configure<TdsSettings>(
+            services.Configure<SimpleTdsSettings>(
                 _configuration.GetSection("TdsSettings"));
+
+            // Φόρτωση ρυθμίσεων για τον απλό TDS Listener
+            services.Configure<SimpleTdsSettings>(options =>
+            {
+                options.ApiKey = "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
+                options.RelayInternalUrl = "http://localhost:5175";
+            });
+
+            // Καταγραφή των ρυθμίσεων για διαγνωστικούς σκοπούς
+            var tdsSettings = _configuration.GetSection("TdsSettings").Get<SimpleTdsSettings>();
+            var logger = services.BuildServiceProvider().GetRequiredService<ILogger<Startup>>();
+            logger.LogInformation("TDS Listener Settings: Address={Address}, Port={Port}, RelayUrl={RelayUrl}",
+                tdsSettings?.ListenAddress ?? "not set",
+                tdsSettings?.ListenPort ?? 0,
+                tdsSettings?.RelayInternalUrl ?? "not set");
 
             // Προσθήκη του RegisteredServices ως singleton για να μπορεί να χρησιμοποιηθεί από τον TDS Listener
             services.AddSingleton(RegisteredServices);
 
             // Προσθήκη του TDS Listener ως hosted service
-            services.AddHostedService<TdsListener>();
+
+            services.AddHostedService<SimpleTdsListener>();
+
+            // services.AddHostedService<TdsListener>();
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILogger<Startup> logger)
@@ -76,6 +110,154 @@ namespace SqlRelayServer
             }
 
             app.UseRouting();
+
+            // Προσθέστε αυτό στη μέθοδο Configure του Startup.cs
+            app.Map("/tds-test", appBuilder =>
+            {
+                appBuilder.Run(async context =>
+                {
+                    context.Response.ContentType = "text/plain";
+                    await context.Response.WriteAsync("TDS Listener Test\n");
+                    await context.Response.WriteAsync($"TDS Listener active: {true}\n");
+                    await context.Response.WriteAsync($"Listening on: {_configuration["TdsSettings:ListenAddress"]}:{_configuration["TdsSettings:ListenPort"]}\n");
+                    await context.Response.WriteAsync($"Active sessions: {RegisteredServices.Count}\n");
+
+                    // Εμφάνιση των ενεργών υπηρεσιών
+                    await context.Response.WriteAsync("\nActive SQL Tunnel Services:\n");
+                    foreach (var service in RegisteredServices.Values.Where(s => s.LastHeartbeat > DateTime.UtcNow.AddMinutes(-2)))
+                    {
+                        await context.Response.WriteAsync($"- {service.ServiceId}, Last heartbeat: {service.LastHeartbeat}, Version: {service.Version}\n");
+                    }
+                });
+            });
+
+
+            app.Map("/query-results", appBuilder =>
+            {
+                appBuilder.Run(async context =>
+                {
+                    // Έλεγχος αν το API key περιλαμβάνεται ως παράμετρος URL
+                    string apiKeyFromQuery = context.Request.Query["apiKey"];
+                    bool hasValidApiKeyHeader = ValidateClientAuth(context, logger);
+                    bool hasValidApiKeyQuery = !string.IsNullOrEmpty(apiKeyFromQuery) &&
+                                  apiKeyFromQuery == "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
+
+
+
+                    // Αν δεν υπάρχει έγκυρο API key ούτε στις επικεφαλίδες ούτε ως παράμετρος
+                    if (!hasValidApiKeyHeader && !hasValidApiKeyQuery)
+                    {
+                        context.Response.StatusCode = 401;
+                        await context.Response.WriteAsync("Unauthorized");
+                        return;
+                    }
+
+                    context.Response.ContentType = "text/html";
+
+                    await context.Response.WriteAsync("<!DOCTYPE html>\n");
+                    await context.Response.WriteAsync("<html><head><title>SQL Query Results</title>");
+                    await context.Response.WriteAsync("<style>body{font-family:Arial,sans-serif;margin:20px;} ");
+                    await context.Response.WriteAsync("table{border-collapse:collapse;width:100%;} ");
+                    await context.Response.WriteAsync("th,td{border:1px solid #ddd;padding:8px;text-align:left;} ");
+                    await context.Response.WriteAsync("th{background-color:#f2f2f2;} ");
+                    await context.Response.WriteAsync("tr:nth-child(even){background-color:#f9f9f9;} ");
+                    await context.Response.WriteAsync(".query{margin-bottom:30px;border:1px solid #ccc;padding:10px;border-radius:5px;} ");
+                    await context.Response.WriteAsync(".query-text{font-family:monospace;background:#eee;padding:5px;margin:10px 0;} ");
+                    await context.Response.WriteAsync(".timestamp{color:#666;font-size:0.9em;} ");
+                    await context.Response.WriteAsync("</style></head><body>");
+
+                    await context.Response.WriteAsync("<h1>Recent SQL Query Results</h1>");
+
+                    if (RecentQueryResults.Count == 0)
+                    {
+                        await context.Response.WriteAsync("<p>No query results available yet.</p>");
+                    }
+                    else
+                    {
+                        // Εμφάνιση των πιο πρόσφατων πρώτα
+                        var sortedResults = RecentQueryResults.Values
+                            .OrderByDescending(r => r.Timestamp)
+                            .ToList();
+
+                        foreach (var result in sortedResults)
+                        {
+                            await context.Response.WriteAsync($"<div class='query'>");
+                            await context.Response.WriteAsync($"<h3>Query ID: {result.QueryId}</h3>");
+                            await context.Response.WriteAsync($"<div class='timestamp'>Executed: {result.Timestamp}</div>");
+                            await context.Response.WriteAsync($"<div class='query-text'>{WebUtility.HtmlEncode(result.Query)}</div>");
+
+                            // Αν υπάρχει σφάλμα
+                            if (!string.IsNullOrEmpty(result.Error))
+                            {
+                                await context.Response.WriteAsync($"<div style='color:red;'>Error: {WebUtility.HtmlEncode(result.Error)}</div>");
+                                continue;
+                            }
+
+                            // Αν δεν υπάρχουν αποτελέσματα
+                            if (string.IsNullOrEmpty(result.Result) || result.Result == "[]")
+                            {
+                                await context.Response.WriteAsync("<div>No results returned</div>");
+                                continue;
+                            }
+
+                            // Προσπάθεια εμφάνισης των αποτελεσμάτων ως πίνακα
+                            try
+                            {
+                                var dataTable = JsonConvert.DeserializeObject<DataTable>(result.Result);
+                                if (dataTable != null && dataTable.Rows.Count > 0)
+                                {
+                                    await context.Response.WriteAsync("<table>");
+
+                                    // Επικεφαλίδες στηλών
+                                    await context.Response.WriteAsync("<tr>");
+                                    foreach (DataColumn column in dataTable.Columns)
+                                    {
+                                        await context.Response.WriteAsync($"<th>{WebUtility.HtmlEncode(column.ColumnName)}</th>");
+                                    }
+                                    await context.Response.WriteAsync("</tr>");
+
+                                    // Γραμμές δεδομένων
+                                    foreach (DataRow row in dataTable.Rows)
+                                    {
+                                        await context.Response.WriteAsync("<tr>");
+                                        foreach (DataColumn column in dataTable.Columns)
+                                        {
+                                            string value = row[column] == DBNull.Value ? "NULL" : row[column].ToString();
+                                            await context.Response.WriteAsync($"<td>{WebUtility.HtmlEncode(value)}</td>");
+                                        }
+                                        await context.Response.WriteAsync("</tr>");
+                                    }
+
+                                    await context.Response.WriteAsync("</table>");
+                                }
+                                else
+                                {
+                                    await context.Response.WriteAsync("<div>No rows in result</div>");
+                                }
+                            }
+                            catch
+                            {
+                                // Αν δεν μπορεί να μετατραπεί σε DataTable, εμφάνιση του raw JSON
+                                await context.Response.WriteAsync("<div>Raw result:</div>");
+                                await context.Response.WriteAsync($"<pre>{WebUtility.HtmlEncode(result.Result)}</pre>");
+                            }
+
+                            await context.Response.WriteAsync("</div>");
+                        }
+                    }
+
+                    // Προσθήκη JavaScript για αυτόματη ανανέωση κάθε 5 δευτερόλεπτα
+                    await context.Response.WriteAsync("<script>");
+                    await context.Response.WriteAsync("setTimeout(function() { location.reload(); }, 5000);");
+                    await context.Response.WriteAsync("</script>");
+
+                    await context.Response.WriteAsync("</body></html>");
+                });
+            });
+
+
+
+
 
             // Διαδρομές API για τους πελάτες (clients)
             app.UseEndpoints(endpoints =>
@@ -376,7 +558,7 @@ namespace SqlRelayServer
                         }
 
                         // Αφαίρεση του query από τα εκκρεμή
-                        PendingQueries.TryRemove(queryResult.QueryId, out _);
+                        PendingQueries.TryRemove(queryResult.QueryId, out var queryInfo);
 
                         // Αποθήκευση του αποτελέσματος
                         QueryResults.TryAdd(queryResult.QueryId, new QueryResult
@@ -386,6 +568,36 @@ namespace SqlRelayServer
                             Error = queryResult.Error,
                             Timestamp = queryResult.Timestamp
                         });
+
+                        // Αποθήκευση στα πρόσφατα αποτελέσματα για προβολή
+                        if (queryInfo != null)
+                        {
+                            var resultInfo = new QueryResultInfo
+                            {
+                                QueryId = queryResult.QueryId,
+                                Query = queryInfo.Query,
+                                Result = queryResult.Result,
+                                Error = queryResult.Error,
+                                Timestamp = queryResult.Timestamp,
+                                ClientEndPoint = context.Connection.RemoteIpAddress.ToString()
+                            };
+
+                            // Διατήρηση μόνο των τελευταίων 50 αποτελεσμάτων
+                            while (RecentQueryResults.Count >= 50)
+                            {
+                                var oldestKey = RecentQueryResults.OrderBy(kv => kv.Value.Timestamp).FirstOrDefault().Key;
+                                if (!string.IsNullOrEmpty(oldestKey))
+                                {
+                                    RecentQueryResults.TryRemove(oldestKey, out _);
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
+
+                            RecentQueryResults.TryAdd(queryResult.QueryId, resultInfo);
+                        }
 
                         context.Response.StatusCode = 200;
                         await context.Response.WriteAsync("OK");

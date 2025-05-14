@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlTunnelWebClient", "SqlTu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SQLTunnelService", "SQLTunnelService\SQLTunnelService.csproj", "{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TdsTest", "TdsTest\TdsTest.csproj", "{2D19FCDD-B8C4-43AA-A751-869D6784D13E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TdsDirectRelay", "TdsDirectRelay\TdsDirectRelay.csproj", "{623F82EC-F370-429A-BBE3-F58D3F4479A7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +31,14 @@ Global
 		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8CA9AA14-E0C8-4982-9DCE-9BBA62DCB6FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2D19FCDD-B8C4-43AA-A751-869D6784D13E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2D19FCDD-B8C4-43AA-A751-869D6784D13E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2D19FCDD-B8C4-43AA-A751-869D6784D13E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2D19FCDD-B8C4-43AA-A751-869D6784D13E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{623F82EC-F370-429A-BBE3-F58D3F4479A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{623F82EC-F370-429A-BBE3-F58D3F4479A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{623F82EC-F370-429A-BBE3-F58D3F4479A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{623F82EC-F370-429A-BBE3-F58D3F4479A7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

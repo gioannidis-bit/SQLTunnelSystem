@@ -24,67 +24,43 @@ namespace SqlRelayServer
         {
             if (packet == null || packet.Length < 8)
             {
-                return null; // Πολύ μικρό για να είναι έγκυρο TDS πακέτο
+                return null;
             }
 
-            // Εξαγωγή επικεφαλίδας
             byte packetType = packet[0];
-            byte status = packet[1];
-            ushort length = BitConverter.ToUInt16(packet, 2);
-            ushort spid = BitConverter.ToUInt16(packet, 4);
-            byte packetId = packet[6];
 
-            // Έλεγχος εάν είναι SQL Batch πακέτο
-            if (packetType == TDS_TYPE_SQL_BATCH)
+            // For SQL Batch (type 0x01), extract the query
+            if (packetType == 0x01)
             {
-                // Εξαγωγή του SQL ερωτήματος (ξεκινά μετά την επικεφαλίδα των 8 bytes)
-                // Σε μια πραγματική υλοποίηση, θα χρειαζόταν περισσότερη ανάλυση για διαφορετικές κωδικοποιήσεις
-                return Encoding.Unicode.GetString(packet, 8, packet.Length - 8);
-            }
-            else if (packetType == TDS_TYPE_PRE_LOGIN)
-            {
-                // Αποστολή προκαθορισμένης απάντησης για PreLogin
-                return "PRELOGIN"; // Ειδικός κωδικός για προσομοίωση του PreLogin
-            }
-            else if (packetType == TDS_TYPE_TDS7_LOGIN)
-            {
-                // Αποστολή προκαθορισμένης απάντησης για Login
-                return "LOGIN"; // Ειδικός κωδικός για προσομοίωση του Login
+                // Skip the first 8 bytes (header)
+                // For Unicode, skip a few more bytes for headers
+                int startPos = 8;
+
+                // For TDS 7.2+, SQL batch starts with some headers
+                // Usually there's a 4-byte header after the TDS header
+                startPos += 4;
+
+                // Extract the SQL query (assuming it's in Unicode format)
+                try
+                {
+                    // Make sure we don't go beyond the packet length
+                    int textLength = packet.Length - startPos;
+                    if (textLength > 0)
+                    {
+                        return Encoding.Unicode.GetString(packet, startPos, textLength).Trim('\0');
+                    }
+                }
+                catch (Exception)
+                {
+                    // In case of encoding errors, try ASCII as fallback
+                    return Encoding.ASCII.GetString(packet, startPos, packet.Length - startPos).Trim('\0');
+                }
             }
 
-            return null; // Άγνωστος τύπος πακέτου
+            return null;
         }
 
-        // Δημιουργία απάντησης PreLogin
-        public static byte[] CreatePreLoginResponse()
-        {
-            // Απλοποιημένη προσομοίωση της απάντησης PreLogin
-            // Σε πραγματική υλοποίηση, θα χρειαζόταν σωστή μορφοποίηση κατά το πρωτόκολλο TDS
-            byte[] response = new byte[32];
-            response[0] = TDS_TYPE_PRE_LOGIN; // Τύπος πακέτου
-            response[1] = TDS_STATUS_EOM;     // Κατάσταση πακέτου (End of Message)
-            BitConverter.GetBytes((ushort)32).CopyTo(response, 2); // Μήκος πακέτου
-            BitConverter.GetBytes((ushort)1).CopyTo(response, 4);  // SPID = 1
-            response[6] = 1; // Packet ID
-
-            // Υπόλοιπο πακέτο με προκαθορισμένες τιμές
-            return response;
-        }
-
-        // Δημιουργία απάντησης Login
-        public static byte[] CreateLoginResponse()
-        {
-            // Απλοποιημένη προσομοίωση της απάντησης Login
-            byte[] response = new byte[32];
-            response[0] = TDS_TYPE_TDS7_LOGIN; // Τύπος πακέτου
-            response[1] = TDS_STATUS_EOM;      // Κατάσταση πακέτου (End of Message)
-            BitConverter.GetBytes((ushort)32).CopyTo(response, 2); // Μήκος πακέτου
-            BitConverter.GetBytes((ushort)1).CopyTo(response, 4);  // SPID = 1
-            response[6] = 1; // Packet ID
-
-            // Υπόλοιπο πακέτο με προκαθορισμένες τιμές επιτυχούς σύνδεσης
-            return response;
-        }
+       
 
         // Μετατροπή του JSON αποτελέσματος σε TDS απάντηση
         public static byte[] EncodeTdsResult(string jsonResult)
