@@ -12,6 +12,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 
 namespace SqlRelayServer
 {
@@ -32,6 +33,13 @@ namespace SqlRelayServer
 
     public class Startup
     {
+        private readonly IConfiguration _configuration;
+
+        public Startup(IConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
         // Αποθήκευση των εκκρεμών SQL queries
         private static readonly ConcurrentDictionary<string, QueryInfo> PendingQueries = new ConcurrentDictionary<string, QueryInfo>();
 
@@ -45,6 +53,19 @@ namespace SqlRelayServer
         {
             services.AddControllers();
             services.AddLogging(configure => configure.AddConsole());
+
+            // Προσθήκη HttpClient Factory
+            services.AddHttpClient();
+
+            // Φόρτωση των ρυθμίσεων του TDS Listener από το αρχείο ρυθμίσεων
+            services.Configure<TdsSettings>(
+                _configuration.GetSection("TdsSettings"));
+
+            // Προσθήκη του RegisteredServices ως singleton για να μπορεί να χρησιμοποιηθεί από τον TDS Listener
+            services.AddSingleton(RegisteredServices);
+
+            // Προσθήκη του TDS Listener ως hosted service
+            services.AddHostedService<TdsListener>();
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILogger<Startup> logger)
@@ -110,8 +131,9 @@ namespace SqlRelayServer
                             targetService = availableServices.First();
                         }
 
-                        // Δημιουργία μοναδικού ID για το query
-                        var queryId = Guid.NewGuid().ToString();
+                        // Δημιουργία μοναδικού ID για το query αν δεν έχει ήδη
+                        var queryId = string.IsNullOrEmpty(sqlRequest.Id) ?
+                            Guid.NewGuid().ToString() : sqlRequest.Id;
 
                         // Αποθήκευση του query στα εκκρεμή
                         var queryInfo = new QueryInfo
@@ -164,7 +186,7 @@ namespace SqlRelayServer
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "Error processing SQL execution request");
+                        logger.LogError(ex, "Error processing SQL execution request from TDS Listener");
                         context.Response.StatusCode = 500;
                         await context.Response.WriteAsync($"Internal server error: {ex.Message}");
                     }
@@ -448,6 +470,7 @@ namespace SqlRelayServer
 
     public class SqlRequest
     {
+        public string Id { get; set; }  // Προσθήκη αυτής της ιδιότητας
         public string Query { get; set; }
         public object Parameters { get; set; }
         public string ServiceId { get; set; } // Νέο πεδίο για επιλογή συγκεκριμένου agent
