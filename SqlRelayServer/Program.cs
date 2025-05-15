@@ -92,15 +92,20 @@ namespace SqlRelayServer
                 tdsSettings?.ListenPort ?? 0,
                 tdsSettings?.RelayInternalUrl ?? "not set");
 
-            // Προσθήκη του RegisteredServices ως singleton για να μπορεί να χρησιμοποιηθεί από τον TDS Listener
+            // Add RegisteredServices as singleton for the TDS Listener
             services.AddSingleton(RegisteredServices);
+            services.AddSingleton(PendingQueries);
+            services.AddSingleton(QueryResults);
+            services.AddSingleton(RecentQueryResults);
 
             // Προσθήκη του TDS Listener ως hosted service
 
-            services.AddHostedService<SimpleTdsListener>();
+            services.AddHostedService<ImprovedTdsListener>();
 
             // services.AddHostedService<TdsListener>();
         }
+
+
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILogger<Startup> logger)
         {
