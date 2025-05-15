@@ -120,7 +120,7 @@ namespace TdsTest
                                 Console.WriteLine("\nStep 2: Sending Login packet...");
 
                                 // Create basic login packet
-                                byte[] loginPacket = CreateBasicLoginPacket("sa", "hitprotel");
+                                byte[] loginPacket = CreateBasicLoginPacket("proteluser", "protel915930");
 
                                 PrintPacketSummary(loginPacket, "SEND");
                                 await stream.WriteAsync(loginPacket, 0, loginPacket.Length);

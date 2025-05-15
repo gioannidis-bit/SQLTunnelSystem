@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using System.Net.Http;
 using System.IO;
+using System.Data;
 
 namespace SqlRelayServer
 {
@@ -27,13 +28,13 @@ namespace SqlRelayServer
         public ImprovedTdsListener(
             ILogger<ImprovedTdsListener> logger,
             IHttpClientFactory httpClientFactory,
-            IOptions<ImprovedTdsListener> settings,
+            IOptions<SimpleTdsSettings> settings,
             ConcurrentDictionary<string, ServiceInfo> registeredServices)
         {
             _logger = logger;
             _httpClientFactory = httpClientFactory;
-            _apiKey = settings.Value._apiKey;
-            _relayUrl = settings.Value._relayUrl;
+            _apiKey = settings.Value.ApiKey;
+            _relayUrl = settings.Value.RelayInternalUrl;
             _registeredServices = registeredServices;
 
             _logger.LogInformation("Creating Improved TDS Listener with relay URL: {RelayUrl}", _relayUrl);
@@ -146,81 +147,112 @@ namespace SqlRelayServer
         {
             try
             {
+                Console.WriteLine("\n=== PRELOGIN PHASE ===\n");
+
                 // Read the PRELOGIN packet
                 var preLoginPacket = await ReadTdsPacketAsync(stream, token);
-                if (preLoginPacket == null || preLoginPacket.Type != 0x12) // 0x12 = PRELOGIN
+                if (preLoginPacket == null || preLoginPacket.Type != 0x12)
                 {
-                    _logger.LogWarning("Connection {ConnectionId}: Expected PRELOGIN packet, received: {PacketType}",
-                        session.ConnectionId, preLoginPacket?.Type.ToString("X2") ?? "null");
+                    Console.WriteLine($"Expected PRELOGIN packet (0x12), received: {preLoginPacket?.Type.ToString("X2") ?? "null"}");
                     return false;
                 }
 
-                _logger.LogInformation("Connection {ConnectionId}: Received PRELOGIN packet, length: {Length}",
-                    session.ConnectionId, preLoginPacket.Data.Length);
-
                 // Parse client PRELOGIN options
                 var clientOptions = ParsePreLoginOptions(preLoginPacket.Data);
-                LogPreLoginOptions(session.ConnectionId, clientOptions, "Client");
 
-                // Create server PRELOGIN response
-                var serverOptions = new TdsPreLoginOptions
-                {
-                    Version = new byte[] { 0x0C, 0x00, 0x10, 0x00, 0x00, 0x00 }, // SQL Server 2017
-                    Encryption = new byte[] { 0x00 }, // ENCRYPT_OFF
-                    ThreadId = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                    Mars = new byte[] { 0x00 }, // MARS disabled
-                    TraceId = null
-                };
+                // Build PRELOGIN response with ENCRYPT_OFF
+                byte[] responseData = BuildPreLoginResponse(clientOptions);
 
-                // Build the response packet
-                var responseData = BuildPreLoginResponse(serverOptions);
+                // Βρες και τροποποίησε την τιμή ENCRYPTION
+              
 
-                // Send PRELOGIN response
+             
+
+                // Στείλε την απάντηση
                 await SendTdsPacketAsync(stream, new TdsPacket
                 {
-                    Type = 0x04, // Tabular result
+                    Type = 0x12,    // ← PRELOGIN Response
                     Status = 0x01, // EOM
                     Spid = 0,
                     PacketId = 1,
                     Data = responseData
                 }, token);
 
-                _logger.LogInformation("Connection {ConnectionId}: Sent PRELOGIN response, length: {Length}",
-                    session.ConnectionId, responseData.Length);
-
+                Console.WriteLine("PRELOGIN phase completed successfully");
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Connection {ConnectionId}: Error during PRELOGIN phase", session.ConnectionId);
+                Console.WriteLine($"Error during PRELOGIN phase: {ex.Message}");
                 return false;
             }
+        }
+
+        public class TdsSessionState
+        {
+            public Guid ConnectionId { get; set; }
+            public string ClientEndpoint { get; set; }
+            public string ClientHostname { get; set; }
+            public string Username { get; set; }
+            public string Database { get; set; }
+            public bool EncryptionRequired { get; set; } // Πρόσθεσε αυτή τη γραμμή
+            public TdsPacket NextPacket { get; set; }
         }
 
         private async Task<bool> HandleLoginPhase(NetworkStream stream, TdsSessionState session, CancellationToken token)
         {
             try
             {
-                // Read the LOGIN7 packet
-                var loginPacket = await ReadTdsPacketAsync(stream, token);
-                if (loginPacket == null || loginPacket.Type != 0x10) // 0x10 = LOGIN7
+                Console.WriteLine("\n=== LOGIN PHASE ===\n");
+
+                Console.WriteLine("Waiting for LOGIN7 packet...");
+                var loginPacket = await ReadWithTimeoutAsync(stream, 10000, token);
+
+                if (loginPacket == null)
                 {
-                    _logger.LogWarning("Connection {ConnectionId}: Expected LOGIN7 packet, received: {PacketType}",
-                        session.ConnectionId, loginPacket?.Type.ToString("X2") ?? "null");
+                    Console.WriteLine("No LOGIN7 packet received (timeout)");
                     return false;
                 }
 
-                _logger.LogInformation("Connection {ConnectionId}: Received LOGIN7 packet, length: {Length}",
-                    session.ConnectionId, loginPacket.Data.Length);
+                Console.WriteLine($"Received packet with type 0x{loginPacket.Type:X2} for LOGIN phase");
 
-                // Parse login packet to extract username, database, etc.
-                // This is simplified - a full implementation would parse the entire LOGIN7 structure
+                // Αν είναι TLS πακέτο αντί για LOGIN7
+                if (loginPacket.Type == 0x12)
+                {
+                    Console.WriteLine("Warning: Received TLS/PRELOGIN packet instead of LOGIN7!");
+                    Console.WriteLine("Client might be trying to use encryption despite ENCRYPT_OFF");
+
+                    // Στείλε καθαρό μήνυμα σφάλματος
+                    await SendErrorResponseAsync(stream, session,
+                        "This server requires connections with encryption disabled. " +
+                        "Please use 'Encrypt=False' in your connection string.", token);
+                    return false;
+                }
+
+                if (loginPacket.Type != 0x10) // LOGIN7
+                {
+                    Console.WriteLine($"Error: Expected LOGIN7 (0x10) packet, received 0x{loginPacket.Type:X2}");
+                    return false;
+                }
+
+                // Extract login info
+                Console.WriteLine("Extracting login information...");
                 ExtractLoginInfo(loginPacket.Data, session);
 
-                // Build login response with LOGIN_ACK and DONE tokens
+                Console.WriteLine($"Client login info - Username: {session.Username}, Database: {session.Database}");
+
+                // Build the response (with extra debugging)
+                Console.WriteLine("Building LOGIN response...");
                 byte[] loginResponse = BuildLoginResponse(session);
 
-                // Send LOGIN response
+                Console.WriteLine($"LOGIN response full hex dump:");
+                for (int i = 0; i < loginResponse.Length; i += 16)
+                {
+                    int len = Math.Min(16, loginResponse.Length - i);
+                    Console.WriteLine($"{i:X4}: {BitConverter.ToString(loginResponse, i, len)}");
+                }
+
+                Console.WriteLine("Sending LOGIN response to client...");
                 await SendTdsPacketAsync(stream, new TdsPacket
                 {
                     Type = 0x04, // Tabular result
@@ -230,15 +262,30 @@ namespace SqlRelayServer
                     Data = loginResponse
                 }, token);
 
-                _logger.LogInformation("Connection {ConnectionId}: Sent LOGIN7 response, length: {Length}",
-                    session.ConnectionId, loginResponse.Length);
-
+                Console.WriteLine("LOGIN phase completed successfully");
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Connection {ConnectionId}: Error during LOGIN phase", session.ConnectionId);
+                Console.WriteLine($"Error during LOGIN phase: {ex.Message}\n{ex.StackTrace}");
                 return false;
+            }
+        }
+
+        // Βοηθητική συνάρτηση για ανάγνωση με μεγαλύτερο timeout
+        private async Task<TdsPacket> ReadWithTimeoutAsync(NetworkStream stream, int timeoutMs, CancellationToken token)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(timeoutMs);
+
+            try
+            {
+                return await ReadTdsPacketAsync(stream, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Read operation timed out after {TimeoutMs}ms", timeoutMs);
+                return null;
             }
         }
 
@@ -246,78 +293,407 @@ namespace SqlRelayServer
         {
             try
             {
-                // Keep reading SQL batch packets until the connection is closed or cancelled
+                Console.WriteLine("\n=== SQL BATCH PROCESSING ===\n");
+
                 while (!token.IsCancellationRequested)
                 {
+                    Console.WriteLine("Waiting for SQL batch packet...");
                     var packet = await ReadTdsPacketAsync(stream, token);
+
                     if (packet == null)
                     {
-                        _logger.LogInformation("Connection {ConnectionId}: Client closed connection", session.ConnectionId);
+                        Console.WriteLine("Client closed connection or timeout occurred");
                         break;
                     }
 
-                    // 0x01 = SQL Batch
-                    if (packet.Type == 0x01)
+                    Console.WriteLine($"Received packet type: 0x{packet.Type:X2}, Length: {packet.Length}");
+
+                    if (packet.Type == 0x01) // SQL Batch
                     {
                         string sqlQuery = ExtractSqlQuery(packet.Data);
-                        _logger.LogInformation("Connection {ConnectionId}: Received SQL Batch: {Query}",
-                            session.ConnectionId, sqlQuery);
+                        Console.WriteLine($"SQL Query: {sqlQuery}");
 
                         if (!string.IsNullOrEmpty(sqlQuery))
                         {
                             try
                             {
-                                // Execute query through API
+                                Console.WriteLine("Executing SQL query through API...");
                                 string result = await ExecuteSqlQueryAsync(sqlQuery, session, token);
+                                Console.WriteLine($"API response: {(result?.Length > 100 ? result.Substring(0, 100) + "..." : result)}");
 
-                                // Process the results
-                                _logger.LogInformation("Connection {ConnectionId}: Query executed successfully", session.ConnectionId);
-
-                                // Send result rows (simplified - would actually convert JSON to TDS data rows)
-                                byte[] resultPacket = BuildQueryResultPacket(result);
-                                await SendTdsPacketAsync(stream, new TdsPacket
-                                {
-                                    Type = 0x04, // Tabular result
-                                    Status = 0x01, // EOM
-                                    Spid = 0,
-                                    PacketId = 1,
-                                    Data = resultPacket
-                                }, token);
+                                Console.WriteLine("Sending query results to client...");
+                                await SendQueryResultsAsync(stream, session, result, token);
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Connection {ConnectionId}: Error executing query", session.ConnectionId);
+                                Console.WriteLine($"Error executing query: {ex.Message}");
                                 await SendErrorResponseAsync(stream, session, ex.Message, token);
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("Connection {ConnectionId}: Could not extract SQL query from packet", session.ConnectionId);
-                            await SendErrorResponseAsync(stream, session, "Invalid SQL query format", token);
+                            Console.WriteLine("Empty SQL query - sending empty result");
+                            await SendEmptyResultAsync(stream, session, token);
                         }
                     }
                     else
                     {
-                        _logger.LogWarning("Connection {ConnectionId}: Unexpected packet type: 0x{PacketType:X2}",
-                            session.ConnectionId, packet.Type);
+                        Console.WriteLine($"Unexpected packet type: 0x{packet.Type:X2} - ignoring");
+                        await SendEmptyResultAsync(stream, session, token);
                     }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal cancellation
-                _logger.LogInformation("Connection {ConnectionId}: Operation cancelled", session.ConnectionId);
-            }
-            catch (IOException ex)
-            {
-                // This is often just a client disconnection
-                _logger.LogInformation("Connection {ConnectionId}: IO exception: {Message}", session.ConnectionId, ex.Message);
+
+                Console.WriteLine("SQL batch processing ended");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Connection {ConnectionId}: Error processing SQL batches", session.ConnectionId);
+                Console.WriteLine($"Error in SQL batch processing: {ex.Message}\n{ex.StackTrace}");
             }
         }
+
+        private async Task SendQueryResultsAsync(NetworkStream stream, TdsSessionState session, string jsonResult, CancellationToken token)
+        {
+            try
+            {
+                _logger.LogDebug("Connection {ConnectionId}: Preparing to send result: {JsonLength} bytes",
+                    session.ConnectionId, jsonResult?.Length ?? 0);
+
+                // Αν δεν έχουμε αποτέλεσμα, στείλε ένα κενό αποτέλεσμα
+                if (string.IsNullOrEmpty(jsonResult) || jsonResult == "[]" || jsonResult == "{}")
+                {
+                    await SendEmptyResultAsync(stream, session, token);
+                    return;
+                }
+
+                // Προσπάθεια αποκωδικοποίησης JSON σε DataTable
+                DataTable dataTable;
+                try
+                {
+                    dataTable = JsonConvert.DeserializeObject<DataTable>(jsonResult);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Connection {ConnectionId}: Error deserializing JSON result", session.ConnectionId);
+                    await SendErrorResponseAsync(stream, session, "Invalid result format", token);
+                    return;
+                }
+
+                if (dataTable == null || dataTable.Columns.Count == 0)
+                {
+                    await SendEmptyResultAsync(stream, session, token);
+                    return;
+                }
+
+                // Δημιουργία του TDS response με τα αποτελέσματα
+                List<byte> responseData = new List<byte>();
+
+                // COLMETADATA token (0x81)
+                responseData.Add(0x81); // Token type
+
+                // Count of columns (2 bytes)
+                ushort columnCount = (ushort)dataTable.Columns.Count;
+                responseData.Add((byte)(columnCount & 0xFF));       // LSB
+                responseData.Add((byte)(columnCount >> 8));         // MSB
+
+                // Για κάθε στήλη, πρόσθεσε μεταδεδομένα
+                for (int i = 0; i < dataTable.Columns.Count; i++)
+                {
+                    DataColumn column = dataTable.Columns[i];
+
+                    // UserType (2 bytes) - typically 0
+                    responseData.Add(0x00);
+                    responseData.Add(0x00);
+
+                    // Flags (2 bytes)
+                    responseData.Add(0x00);
+                    responseData.Add(0x00);
+
+                    // TYPE_INFO - Αναλόγως του τύπου δεδομένων
+                    byte typeInfo = GetSqlTypeInfo(column.DataType);
+                    responseData.Add(typeInfo);
+
+                    // Πρόσθετες πληροφορίες τύπου, αναλόγως του τύπου
+                    AddTypeSpecificInfo(responseData, column.DataType);
+
+                    // Column name (Unicode string)
+                    byte[] columnNameBytes = Encoding.Unicode.GetBytes(column.ColumnName);
+                    responseData.Add((byte)columnNameBytes.Length); // Length
+                    responseData.AddRange(columnNameBytes);
+                }
+
+                // ROW tokens - Για κάθε γραμμή δεδομένων
+                foreach (DataRow row in dataTable.Rows)
+                {
+                    responseData.Add(0xD1); // ROW token
+
+                    // Για κάθε κελί στη γραμμή
+                    for (int i = 0; i < dataTable.Columns.Count; i++)
+                    {
+                        object value = row[i];
+
+                        if (value == DBNull.Value || value == null)
+                        {
+                            // NULL value
+                            responseData.Add(0xFF); // NULL marker
+                        }
+                        else
+                        {
+                            // Encode value based on the column type
+                            AddEncodedValue(responseData, value, dataTable.Columns[i].DataType);
+                        }
+                    }
+                }
+
+                // DONE token (0xFD)
+                responseData.Add(0xFD);
+
+                // Status (2 bytes) - 0x0001 = DONE_FINAL + 0x0010 = DONE_COUNT = 0x0011
+                responseData.Add(0x11);
+                responseData.Add(0x00);
+
+                // CurCmd (2 bytes)
+                responseData.Add(0x00);
+                responseData.Add(0x00);
+
+                // RowCount (8 bytes) - Number of rows affected
+                long rowCount = dataTable.Rows.Count;
+                byte[] rowCountBytes = BitConverter.GetBytes(rowCount);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(rowCountBytes);
+
+                responseData.AddRange(rowCountBytes);
+
+                // Διαίρεση του response σε πακέτα, αν είναι αναγκαίο
+                const int maxPacketSize = 4096;
+                for (int offset = 0; offset < responseData.Count; offset += maxPacketSize)
+                {
+                    int chunkSize = Math.Min(maxPacketSize, responseData.Count - offset);
+                    byte[] chunk = new byte[chunkSize];
+                    responseData.CopyTo(offset, chunk, 0, chunkSize);
+
+                    // Έλεγχος αν είναι το τελευταίο πακέτο
+                    bool isLastPacket = (offset + chunkSize >= responseData.Count);
+
+                    await SendTdsPacketAsync(stream, new TdsPacket
+                    {
+                        Type = 0x04, // Tabular result
+                        Status = isLastPacket ? (byte)0x01 : (byte)0x00, // EOM μόνο για το τελευταίο
+                        Spid = 0,
+                        PacketId = (byte)((offset / maxPacketSize) + 1), // Αύξηση του PacketId
+                        Data = chunk
+                    }, token);
+                }
+
+                _logger.LogInformation("Connection {ConnectionId}: Sent query results, {RowCount} rows, {TotalBytes} bytes",
+                    session.ConnectionId, rowCount, responseData.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Connection {ConnectionId}: Error sending query results", session.ConnectionId);
+                await SendErrorResponseAsync(stream, session, "Error processing results: " + ex.Message, token);
+            }
+        }
+
+        private byte GetSqlTypeInfo(Type type)
+        {
+            // Mapping .NET types to SQL Server types
+            if (type == typeof(string))
+                return 0xE7; // NVARCHAR
+            else if (type == typeof(int) || type == typeof(Int32))
+                return 0x26; // INT
+            else if (type == typeof(long) || type == typeof(Int64))
+                return 0x6C; // BIGINT
+            else if (type == typeof(short) || type == typeof(Int16))
+                return 0x28; // SMALLINT
+            else if (type == typeof(byte))
+                return 0x30; // TINYINT
+            else if (type == typeof(bool))
+                return 0x68; // BIT
+            else if (type == typeof(decimal) || type == typeof(double) || type == typeof(float))
+                return 0x6F; // FLOAT
+            else if (type == typeof(DateTime))
+                return 0x6D; // DATETIME
+            else if (type == typeof(Guid))
+                return 0x24; // GUID
+            else
+                return 0xE7; // Default to NVARCHAR
+        }
+
+        private void AddTypeSpecificInfo(List<byte> buffer, Type type)
+        {
+            if (type == typeof(string))
+            {
+                // NVARCHAR
+                buffer.Add(0xFF); // Max length
+                buffer.Add(0xFF);
+                buffer.Add(0x00); // Collation (simplified)
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+            }
+            else if (type == typeof(int) || type == typeof(Int32) ||
+                     type == typeof(long) || type == typeof(Int64) ||
+                     type == typeof(short) || type == typeof(Int16) ||
+                     type == typeof(byte) || type == typeof(bool) ||
+                     type == typeof(decimal) || type == typeof(double) || type == typeof(float) ||
+                     type == typeof(DateTime) || type == typeof(Guid))
+            {
+                // Αυτοί οι τύποι δεν έχουν πρόσθετες πληροφορίες
+            }
+            else
+            {
+                // Για άγνωστους τύπους, χρησιμοποιούμε NVARCHAR
+                buffer.Add(0xFF); // Max length
+                buffer.Add(0xFF);
+                buffer.Add(0x00); // Collation (simplified)
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+                buffer.Add(0x00);
+            }
+        }
+
+        private void AddEncodedValue(List<byte> buffer, object value, Type type)
+        {
+            if (type == typeof(string))
+            {
+                // NVARCHAR
+                string str = value.ToString();
+                byte[] bytes = Encoding.Unicode.GetBytes(str);
+
+                // Προσθήκη μήκους (όπως VARBINARY)
+                if (bytes.Length <= 255)
+                {
+                    buffer.Add((byte)bytes.Length);
+                }
+                else
+                {
+                    buffer.Add(0xFE); // Multi-byte length
+                    buffer.Add((byte)(bytes.Length & 0xFF));
+                    buffer.Add((byte)(bytes.Length >> 8));
+                }
+
+                // Προσθήκη δεδομένων
+                buffer.AddRange(bytes);
+            }
+            else if (type == typeof(int) || type == typeof(Int32))
+            {
+                // INT
+                int intValue = Convert.ToInt32(value);
+                byte[] bytes = BitConverter.GetBytes(intValue);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bytes);
+                buffer.AddRange(bytes);
+            }
+            else if (type == typeof(long) || type == typeof(Int64))
+            {
+                // BIGINT
+                long longValue = Convert.ToInt64(value);
+                byte[] bytes = BitConverter.GetBytes(longValue);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bytes);
+                buffer.AddRange(bytes);
+            }
+            else if (type == typeof(short) || type == typeof(Int16))
+            {
+                // SMALLINT
+                short shortValue = Convert.ToInt16(value);
+                byte[] bytes = BitConverter.GetBytes(shortValue);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bytes);
+                buffer.AddRange(bytes);
+            }
+            else if (type == typeof(byte))
+            {
+                // TINYINT
+                buffer.Add(Convert.ToByte(value));
+            }
+            else if (type == typeof(bool))
+            {
+                // BIT
+                buffer.Add(Convert.ToBoolean(value) ? (byte)1 : (byte)0);
+            }
+            else if (type == typeof(decimal) || type == typeof(double) || type == typeof(float))
+            {
+                // FLOAT
+                double doubleValue = Convert.ToDouble(value);
+                byte[] bytes = BitConverter.GetBytes(doubleValue);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(bytes);
+                buffer.AddRange(bytes);
+            }
+            else if (type == typeof(DateTime))
+            {
+                // DATETIME
+                DateTime dt = Convert.ToDateTime(value);
+
+                // Convert to TDS DATETIME format (simplistic implementation)
+                int days = (int)(dt - new DateTime(1900, 1, 1)).TotalDays;
+                int timePart = (int)((dt.TimeOfDay.TotalSeconds * 300) % 86400000);
+
+                byte[] daysBytes = BitConverter.GetBytes(days);
+                byte[] timeBytes = BitConverter.GetBytes(timePart);
+
+                if (!BitConverter.IsLittleEndian)
+                {
+                    Array.Reverse(daysBytes);
+                    Array.Reverse(timeBytes);
+                }
+
+                buffer.AddRange(timeBytes);
+                buffer.AddRange(daysBytes);
+            }
+            else if (type == typeof(Guid))
+            {
+                // GUID
+                Guid guid = (Guid)value;
+                buffer.AddRange(guid.ToByteArray());
+            }
+            else
+            {
+                // Fallback to string for unknown types
+                string str = value.ToString();
+                byte[] bytes = Encoding.Unicode.GetBytes(str);
+
+                // Length
+                if (bytes.Length <= 255)
+                {
+                    buffer.Add((byte)bytes.Length);
+                }
+                else
+                {
+                    buffer.Add(0xFE); // Multi-byte length
+                    buffer.Add((byte)(bytes.Length & 0xFF));
+                    buffer.Add((byte)(bytes.Length >> 8));
+                }
+
+                // Data
+                buffer.AddRange(bytes);
+            }
+        }
+
+        // Για κενά αποτελέσματα
+        private async Task SendEmptyResultAsync(NetworkStream stream, TdsSessionState session, CancellationToken token)
+        {
+            // Μόνο ένα DONE token
+            byte[] response = new byte[] {
+        0xFD, // DONE token
+        0x10, 0x00, // Status (0x0010 = DONE_COUNT)
+        0x00, 0x00, // CurCmd
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 // RowCount = 0
+    };
+
+            await SendTdsPacketAsync(stream, new TdsPacket
+            {
+                Type = 0x04, // Tabular result
+                Status = 0x01, // EOM
+                Spid = 0,
+                PacketId = 1,
+                Data = response
+            }, token);
+        }
+
 
         private async Task<string> ExecuteSqlQueryAsync(string sqlQuery, TdsSessionState session, CancellationToken token)
         {
@@ -388,91 +764,283 @@ namespace SqlRelayServer
 
         private async Task<TdsPacket> ReadTdsPacketAsync(NetworkStream stream, CancellationToken token)
         {
-            var headerBuffer = new byte[8]; // TDS header is 8 bytes
-
-            // Read the header
-            int bytesRead = await ReadExactlyAsync(stream, headerBuffer, 0, 8, token);
-            if (bytesRead < 8)
+            try
             {
-                return null; // Connection closed
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                var headerBuffer = new byte[8];
+
+                Console.WriteLine(">>> WAITING FOR CLIENT PACKET <<<");
+
+                int bytesRead = await ReadExactlyAsync(stream, headerBuffer, 0, 8, cts.Token);
+                if (bytesRead < 8)
+                {
+                    Console.WriteLine($"CLIENT: Incomplete header received ({bytesRead}/8 bytes)");
+                    return null;
+                }
+
+                // Parse header
+                byte type = headerBuffer[0];
+                byte status = headerBuffer[1];
+                ushort packetLength = (ushort)((headerBuffer[2] << 8) | headerBuffer[3]); // Άλλαξα το "length" σε "packetLength"
+                ushort spid = (ushort)((headerBuffer[4] << 8) | headerBuffer[5]);
+                byte packetId = headerBuffer[6];
+                byte window = headerBuffer[7];
+
+                Console.WriteLine($"CLIENT PACKET HEADER: Type=0x{type:X2}, Status=0x{status:X2}, Length={packetLength}, SPID={spid}, PacketID={packetId}");
+                Console.WriteLine($"CLIENT HEADER HEX: {BitConverter.ToString(headerBuffer)}");
+
+                if (packetLength < 8)
+                {
+                    Console.WriteLine($"CLIENT: Invalid packet length: {packetLength} (too small)");
+                    return null;
+                }
+
+                // Διάβασε το payload
+                int dataSize = packetLength - 8;
+                var dataBuffer = new byte[dataSize];
+
+                bytesRead = await ReadExactlyAsync(stream, dataBuffer, 0, dataSize, cts.Token);
+                if (bytesRead < dataSize)
+                {
+                    Console.WriteLine($"CLIENT: Incomplete payload received ({bytesRead}/{dataSize} bytes)");
+                    return null;
+                }
+
+                Console.WriteLine($"CLIENT PAYLOAD: {bytesRead} bytes");
+                Console.WriteLine($"CLIENT PAYLOAD HEX: {BitConverter.ToString(dataBuffer)}");
+
+                // Ειδική επεξεργασία ανά τύπο πακέτου
+                if (type == 0x12) // PRELOGIN
+                {
+                    Console.WriteLine("CLIENT PACKET TYPE: PRELOGIN (0x12)");
+                    try
+                    {
+                        // Προσπάθησε να αναλύσεις τα PRELOGIN options
+                        var options = ParsePreLoginOptions(dataBuffer);
+                        Console.WriteLine("CLIENT PRELOGIN OPTIONS:");
+                        if (options.Version != null)
+                            Console.WriteLine($"  VERSION: {BitConverter.ToString(options.Version)}");
+                        if (options.Encryption != null)
+                            Console.WriteLine($"  ENCRYPTION: {BitConverter.ToString(options.Encryption)}");
+                        if (options.Mars != null)
+                            Console.WriteLine($"  MARS: {BitConverter.ToString(options.Mars)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error parsing PRELOGIN options: {ex.Message}");
+                    }
+                }
+                else if (type == 0x10) // LOGIN7
+                {
+                    Console.WriteLine("CLIENT PACKET TYPE: LOGIN7 (0x10)");
+                    // Προσπάθησε να εξάγεις βασικές πληροφορίες
+                    try
+                    {
+                        if (dataBuffer.Length > 36)
+                        {
+                            int loginLength = BitConverter.ToInt32(dataBuffer, 0); // Άλλαξα το "length" σε "loginLength"
+                            uint tdsVersion = BitConverter.ToUInt32(dataBuffer, 4);
+                            int packetSize = BitConverter.ToInt32(dataBuffer, 8);
+                            byte optionFlags1 = dataBuffer.Length > 24 ? dataBuffer[24] : (byte)0;
+                            byte optionFlags2 = dataBuffer.Length > 25 ? dataBuffer[25] : (byte)0;
+
+                            Console.WriteLine($"  TDS Version: 0x{tdsVersion:X8}");
+                            Console.WriteLine($"  Packet Size: {packetSize}");
+                            Console.WriteLine($"  Option Flags1: 0x{optionFlags1:X2}");
+                            Console.WriteLine($"  Option Flags2: 0x{optionFlags2:X2}");
+                            Console.WriteLine($"  Encryption Flag: {(optionFlags2 & 0x80) != 0}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error parsing LOGIN7 data: {ex.Message}");
+                    }
+                }
+                else if (type == 0x01) // SQL Batch
+                {
+                    Console.WriteLine("CLIENT PACKET TYPE: SQL Batch (0x01)");
+                    try
+                    {
+                        string sqlQuery = ExtractSqlQuery(dataBuffer);
+                        Console.WriteLine($"  SQL Query: {sqlQuery}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error extracting SQL query: {ex.Message}");
+                    }
+                }
+
+                return new TdsPacket
+                {
+                    Type = type,
+                    Status = status,
+                    Length = packetLength, // Χρησιμοποιώ το packetLength εδώ
+                    Spid = spid,
+                    PacketId = packetId,
+                    Window = window,
+                    Data = dataBuffer
+                };
             }
-
-            // Parse the header
-            byte type = headerBuffer[0];
-            byte status = headerBuffer[1];
-            ushort length = (ushort)((headerBuffer[2] << 8) | headerBuffer[3]); // big-endian
-            ushort spid = (ushort)((headerBuffer[4] << 8) | headerBuffer[5]);   // big-endian
-            byte packetId = headerBuffer[6];
-            byte window = headerBuffer[7];
-
-            // Sanity check on packet length
-            if (length < 8 || length > 32768)
+            catch (OperationCanceledException)
             {
-                throw new InvalidDataException($"Invalid TDS packet length: {length}");
+                Console.WriteLine("TDS packet read operation timed out");
+                return null;
             }
-
-            // Read the payload
-            var dataBuffer = new byte[length - 8]; // Header size is included in length
-            bytesRead = await ReadExactlyAsync(stream, dataBuffer, 0, dataBuffer.Length, token);
-            if (bytesRead < dataBuffer.Length)
+            catch (Exception ex)
             {
-                return null; // Connection closed during payload read
+                Console.WriteLine($"Error reading TDS packet: {ex.Message}");
+                return null;
             }
-
-            return new TdsPacket
-            {
-                Type = type,
-                Status = status,
-                Length = length,
-                Spid = spid,
-                PacketId = packetId,
-                Window = window,
-                Data = dataBuffer
-            };
         }
 
         private async Task SendTdsPacketAsync(NetworkStream stream, TdsPacket packet, CancellationToken token)
         {
-            // Calculate full packet length (header + data)
-            ushort length = (ushort)(8 + packet.Data.Length);
+            // Calculate full packet length
+            ushort totalLength = (ushort)(8 + packet.Data.Length); // Άλλαξα το "length" σε "totalLength"
 
             // Create buffer for the complete packet
-            var buffer = new byte[length];
+            var buffer = new byte[totalLength];
 
             // Build header
             buffer[0] = packet.Type;
             buffer[1] = packet.Status;
-            buffer[2] = (byte)(length >> 8);    // high byte (big-endian)
-            buffer[3] = (byte)(length & 0xFF);  // low byte (big-endian)
-            buffer[4] = (byte)(packet.Spid >> 8);   // high byte (big-endian)
-            buffer[5] = (byte)(packet.Spid & 0xFF); // low byte (big-endian)
+            buffer[2] = (byte)(totalLength >> 8);    // high byte (big-endian)
+            buffer[3] = (byte)(totalLength & 0xFF);  // low byte (big-endian)
+            buffer[4] = (byte)(packet.Spid >> 8);   // high byte
+            buffer[5] = (byte)(packet.Spid & 0xFF); // low byte
             buffer[6] = packet.PacketId;
             buffer[7] = packet.Window;
 
             // Copy the payload
             Buffer.BlockCopy(packet.Data, 0, buffer, 8, packet.Data.Length);
 
+            Console.WriteLine(">>> SENDING TO CLIENT <<<");
+            Console.WriteLine($"SERVER PACKET: Type=0x{packet.Type:X2}, Status=0x{packet.Status:X2}, Length={totalLength}, SPID={packet.Spid}, PacketID={packet.PacketId}");
+            Console.WriteLine($"SERVER HEADER HEX: {BitConverter.ToString(buffer, 0, 8)}");
+            Console.WriteLine($"SERVER PAYLOAD HEX: {BitConverter.ToString(buffer, 8, buffer.Length - 8)}");
+
+            // Ανάλυση των tokens που στέλνουμε (για το LOGIN response)
+            if (packet.Type == 0x04 && packet.Data.Length > 0) // Tabular result
+            {
+                int offset = 0;
+                while (offset < packet.Data.Length)
+                {
+                    byte tokenType = packet.Data[offset];
+                    if (tokenType == 0xAD) // LOGIN_ACK
+                    {
+                        int tokenLen = packet.Data[offset + 1] | (packet.Data[offset + 2] << 8);
+                        Console.WriteLine($"  Token: LOGIN_ACK (0xAD), Length: {tokenLen}");
+                        offset += 3 + tokenLen;
+                    }
+                    else if (tokenType == 0xE3) // ENVCHANGE
+                    {
+                        int tokenLen = packet.Data[offset + 1] | (packet.Data[offset + 2] << 8);
+                        byte envType = offset + 3 < packet.Data.Length ? packet.Data[offset + 3] : (byte)0;
+                        string envTypeDesc = envType == 1 ? "Database" :
+                                            envType == 2 ? "Language" :
+                                            envType == 3 ? "Charset" :
+                                            envType == 4 ? "Packet Size" :
+                                            $"Unknown ({envType})";
+                        Console.WriteLine($"  Token: ENVCHANGE (0xE3), Length: {tokenLen}, Type: {envTypeDesc}");
+                        offset += 3 + tokenLen;
+                    }
+                    else if (tokenType == 0xAB) // INFO
+                    {
+                        int tokenLen = packet.Data[offset + 1] | (packet.Data[offset + 2] << 8);
+                        Console.WriteLine($"  Token: INFO (0xAB), Length: {tokenLen}");
+                        offset += 3 + tokenLen;
+                    }
+                    else if (tokenType == 0xFD) // DONE
+                    {
+                        Console.WriteLine($"  Token: DONE (0xFD)");
+                        offset += 13; // DONE token είναι πάντα 13 bytes
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  Token: Unknown (0x{tokenType:X2})");
+                        break; // Δεν μπορούμε να προχωρήσουμε περισσότερο
+                    }
+                }
+            }
+
             // Send the packet
             await stream.WriteAsync(buffer, 0, buffer.Length, token);
             await stream.FlushAsync(token);
+
+            Console.WriteLine("PACKET SENT TO CLIENT SUCCESSFULLY");
         }
 
         private async Task SendErrorResponseAsync(NetworkStream stream, TdsSessionState session, string errorMessage, CancellationToken token)
         {
-            // Build error message packet (TDS ERROR token + DONE token)
-            byte[] errorPacket = BuildErrorPacket(errorMessage);
+            // Δημιουργία TDS ERROR token (0xAA)
+            List<byte> errorPacket = new List<byte>();
 
+            // ERROR token
+            errorPacket.Add(0xAA);
+
+            // Πληροφορίες σφάλματος
+            byte[] msgBytes = Encoding.Unicode.GetBytes(errorMessage);
+            byte[] serverBytes = Encoding.Unicode.GetBytes("SQL Relay Server");
+
+            // Length (data after length field)
+            int length = 4 + 1 + 1 + 2 + msgBytes.Length + 2 + serverBytes.Length + 2 + 4;
+            errorPacket.Add((byte)(length & 0xFF));
+            errorPacket.Add((byte)(length >> 8));
+
+            // Error number (18456 - login failed)
+            errorPacket.Add(0x18);
+            errorPacket.Add(0x48);
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x00);
+
+            // State & Class
+            errorPacket.Add(0x01); // State 
+            errorPacket.Add(0x10); // Class = 16 (user error)
+
+            // Message
+            errorPacket.Add((byte)(msgBytes.Length / 2)); // Character count
+            errorPacket.Add(0x00);
+            errorPacket.AddRange(msgBytes);
+
+            // Server name
+            errorPacket.Add((byte)(serverBytes.Length / 2));
+            errorPacket.Add(0x00);
+            errorPacket.AddRange(serverBytes);
+
+            // Procedure name (empty) & line number
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x01);
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x00);
+
+            // DONE token with DONE_ERROR flag
+            errorPacket.Add(0xFD);
+            errorPacket.Add(0x03); // Status = DONE_ERROR | DONE_FINAL
+            errorPacket.Add(0x00);
+            errorPacket.Add(0x00); // CurCmd
+            errorPacket.Add(0x00);
+
+            // Row count (0)
+            for (int i = 0; i < 8; i++)
+            {
+                errorPacket.Add(0x00);
+            }
+
+            // Αποστολή του πακέτου
             await SendTdsPacketAsync(stream, new TdsPacket
             {
                 Type = 0x04, // Tabular result
                 Status = 0x01, // EOM
                 Spid = 0,
                 PacketId = 1,
-                Data = errorPacket
+                Data = errorPacket.ToArray()
             }, token);
 
-            _logger.LogInformation("Connection {ConnectionId}: Sent error response: {Message}",
-                session.ConnectionId, errorMessage);
+            _logger.LogInformation("Sent error response: {Message}", errorMessage);
         }
 
         private TdsPreLoginOptions ParsePreLoginOptions(byte[] packet)
@@ -603,169 +1171,217 @@ namespace SqlRelayServer
             _logger.LogInformation(sb.ToString());
         }
 
-        private byte[] BuildPreLoginResponse(TdsPreLoginOptions options)
+        private byte[] BuildPreLoginResponse(TdsPreLoginOptions clientOptions)
         {
-            // Calculate data and offset section sizes
-            int dataSize = 0;
-            int tokenCount = 0;
+            // Υπολογισμός μεγέθους δεδομένων
+            int dataSize = 6; // VERSION
+            dataSize += 1;    // ENCRYPTION
+            dataSize += 1;    // INSTOPT
+            dataSize += 4;    // THREADID
+            dataSize += 1;    // MARS
 
-            if (options.Version != null) { dataSize += options.Version.Length; tokenCount++; }
-            if (options.Encryption != null) { dataSize += options.Encryption.Length; tokenCount++; }
-            if (options.InstanceName != null) { dataSize += options.InstanceName.Length; tokenCount++; }
-            if (options.ThreadId != null) { dataSize += options.ThreadId.Length; tokenCount++; }
-            if (options.Mars != null) { dataSize += options.Mars.Length; tokenCount++; }
-            if (options.TraceId != null) { dataSize += options.TraceId.Length; tokenCount++; }
-            if (options.FedAuthRequired != null) { dataSize += options.FedAuthRequired.Length; tokenCount++; }
+            // Υπολογισμός offset headers
+            int headerSize = 5 * 5 + 1; // 5 bytes ανά token + 1 για τον terminator
 
-            // Add terminator
-            tokenCount++;
-
-            // Token header = 1 byte type + 2 bytes offset + 2 bytes length
-            int headerSize = tokenCount * 5;
-
-            // Total size = headers + data
             byte[] response = new byte[headerSize + dataSize];
+            int offset = 0;
 
-            // Current position for writing tokens
-            int tokenPos = 0;
+            // VERSION token
+            response[offset++] = 0x00; // TOKEN
+            response[offset++] = (byte)(headerSize >> 8);       // Offset MSB
+            response[offset++] = (byte)(headerSize & 0xFF);     // Offset LSB
+            response[offset++] = 0x00; // Length MSB
+            response[offset++] = 0x06; // Length LSB
 
-            // Offset where data will start
-            int dataOffset = headerSize;
+            // ENCRYPTION token
+            response[offset++] = 0x01; // TOKEN
+            response[offset++] = (byte)((headerSize + 6) >> 8);     // Offset MSB
+            response[offset++] = (byte)((headerSize + 6) & 0xFF);   // Offset LSB
+            response[offset++] = 0x00; // Length MSB
+            response[offset++] = 0x01; // Length LSB
 
-            // Helper to add a token to the response
-            void AddToken(byte tokenType, byte[] data)
-            {
-                if (data == null)
-                    return;
+            // INSTOPT token
+            response[offset++] = 0x02; // TOKEN
+            response[offset++] = (byte)((headerSize + 7) >> 8);     // Offset MSB
+            response[offset++] = (byte)((headerSize + 7) & 0xFF);   // Offset LSB
+            response[offset++] = 0x00; // Length MSB
+            response[offset++] = 0x01; // Length LSB
 
-                // Write token type
-                response[tokenPos++] = tokenType;
+            // THREADID token
+            response[offset++] = 0x03; // TOKEN
+            response[offset++] = (byte)((headerSize + 8) >> 8);     // Offset MSB
+            response[offset++] = (byte)((headerSize + 8) & 0xFF);   // Offset LSB
+            response[offset++] = 0x00; // Length MSB
+            response[offset++] = 0x04; // Length LSB
 
-                // Write data offset (big-endian)
-                response[tokenPos++] = (byte)(dataOffset >> 8);
-                response[tokenPos++] = (byte)(dataOffset & 0xFF);
+            // MARS token
+            response[offset++] = 0x04; // TOKEN
+            response[offset++] = (byte)((headerSize + 12) >> 8);    // Offset MSB
+            response[offset++] = (byte)((headerSize + 12) & 0xFF);  // Offset LSB
+            response[offset++] = 0x00; // Length MSB
+            response[offset++] = 0x01; // Length LSB
 
-                // Write data length (big-endian)
-                response[tokenPos++] = (byte)(data.Length >> 8);
-                response[tokenPos++] = (byte)(data.Length & 0xFF);
+            // Terminator
+            response[offset++] = 0xFF;
 
-                // Copy data to its offset
-                Buffer.BlockCopy(data, 0, response, dataOffset, data.Length);
+            // Data section
+            // VERSION data
+            response[headerSize + 0] = 0x0F; // Major version
+            response[headerSize + 1] = 0x00; // Minor version
+            response[headerSize + 2] = 0x0B; // Build number LSB (δοκίμασε 0x0B αντί για 0x07)
+            response[headerSize + 3] = 0x0D; // Build number MSB
+            response[headerSize + 4] = 0x00; // Sub-build LSB
+            response[headerSize + 5] = 0x00; // Sub-build MSB
 
-                // Update data offset for next token
-                dataOffset += data.Length;
-            }
+            // ENCRYPTION data
+            response[headerSize + 6] = 0x02; // ENCRYPT_NOT_SUP
 
-            // Add all tokens
-            if (options.Version != null) AddToken(0x00, options.Version);
-            if (options.Encryption != null) AddToken(0x01, options.Encryption);
-            if (options.InstanceName != null) AddToken(0x02, options.InstanceName);
-            if (options.ThreadId != null) AddToken(0x03, options.ThreadId);
-            if (options.Mars != null) AddToken(0x04, options.Mars);
-            if (options.TraceId != null) AddToken(0x05, options.TraceId);
-            if (options.FedAuthRequired != null) AddToken(0x06, options.FedAuthRequired);
+            // INSTOPT data
+            response[headerSize + 7] = 0x00; // No named instance
 
-            // Add terminator
-            response[tokenPos] = 0xFF;
+            // THREADID data
+            response[headerSize + 8] = 0x00;
+            response[headerSize + 9] = 0x00;
+            response[headerSize + 10] = 0x00;
+            response[headerSize + 11] = 0x00;
+
+            // MARS data
+            response[headerSize + 12] = 0x00; // MARS disabled
 
             return response;
         }
 
         private void ExtractLoginInfo(byte[] loginData, TdsSessionState session)
         {
-            // A real implementation would parse all the login fields
-            // This is a simplified version that just extracts the hostname
             try
             {
+                // Το LOGIN7 packet έχει ελάχιστο μέγεθος ~36 bytes
                 if (loginData.Length < 36)
+                {
+                    _logger.LogWarning("LOGIN7 packet too short: {Length} bytes", loginData.Length);
                     return;
+                }
 
-                // The login packet has a complex structure
-                // This is just a placeholder for real parsing code
-                session.ClientHostname = "client";
-                session.Username = "user";
-                session.Database = "master";
+                _logger.LogDebug("Parsing LOGIN7 packet of {Length} bytes", loginData.Length);
+
+                // Τα πρώτα 4 bytes είναι το μήκος (little-endian)
+                int length = BitConverter.ToInt32(loginData, 0);
+
+                // Τα επόμενα 4 bytes είναι η έκδοση TDS (συνήθως 0x74000004 για TDS 7.4)
+                uint tdsVersion = BitConverter.ToUInt32(loginData, 4);
+
+                // Packet size (next 4 bytes)
+                int packetSize = BitConverter.ToInt32(loginData, 8);
+
+                // Client version (4 bytes)
+                uint clientVersion = BitConverter.ToUInt32(loginData, 12);
+
+                // Client PID (4 bytes)
+                int clientPid = BitConverter.ToInt32(loginData, 16);
+
+                // Connection ID (4 bytes)
+                int connectionId = BitConverter.ToInt32(loginData, 20);
+
+                // Option Flags 1 (1 byte)
+                byte optionFlags1 = loginData[24];
+
+                // Option Flags 2 (1 byte)
+                byte optionFlags2 = loginData[25];
+
+                // Type Flags (1 byte)
+                byte typeFlags = loginData[26];
+
+                // Option Flags 3 (1 byte)
+                byte optionFlags3 = loginData[27];
+
+                // CRITICAL: Check if the client requires encryption
+                bool fSecurity = (optionFlags2 & 0x80) != 0;  // Bit 7 in optionFlags2
+                bool fODBC = (optionFlags2 & 0x02) != 0;      // Bit 1 in optionFlags2
+                bool fReadOnlyIntent = (optionFlags2 & 0x20) != 0; // Bit 5
+
+                _logger.LogDebug("LOGIN7 Option Flags: Security={Security}, ODBC={ODBC}, ReadOnly={ReadOnly}",
+                    fSecurity, fODBC, fReadOnlyIntent);
+
+                // Offsets for variable-length fields (from byte 36 onwards)
+                int ibHostName = BitConverter.ToInt16(loginData, 28);
+                int cchHostName = BitConverter.ToInt16(loginData, 30);
+                int ibUserName = BitConverter.ToInt16(loginData, 32);
+                int cchUserName = BitConverter.ToInt16(loginData, 34);
+                int ibPassword = BitConverter.ToInt16(loginData, 36);
+                int cchPassword = BitConverter.ToInt16(loginData, 38);
+                int ibAppName = BitConverter.ToInt16(loginData, 40);
+                int cchAppName = BitConverter.ToInt16(loginData, 42);
+                int ibServerName = BitConverter.ToInt16(loginData, 44);
+                int cchServerName = BitConverter.ToInt16(loginData, 46);
+
+                // Extract actual values (all text is Unicode = 2 bytes per character)
+                if (cchHostName > 0 && ibHostName + cchHostName * 2 <= loginData.Length)
+                {
+                    session.ClientHostname = Encoding.Unicode.GetString(loginData, ibHostName, cchHostName * 2).TrimEnd('\0');
+                    _logger.LogDebug("Extracted hostname: {Hostname}", session.ClientHostname);
+                }
+
+                if (cchUserName > 0 && ibUserName + cchUserName * 2 <= loginData.Length)
+                {
+                    session.Username = Encoding.Unicode.GetString(loginData, ibUserName, cchUserName * 2).TrimEnd('\0');
+                    _logger.LogDebug("Extracted username: {Username}", session.Username);
+                }
+
+                // More code to extract other fields...
+
+                // Store encryption requirements in session
+                session.EncryptionRequired = fSecurity;
+
+                _logger.LogInformation("LOGIN7 packet parsed successfully");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error extracting login info");
+                _logger.LogError(ex, "Error parsing LOGIN7 packet");
             }
         }
 
         private byte[] BuildLoginResponse(TdsSessionState session)
         {
-            // This is a simplified login response with LOGIN_ACK and DONE tokens
+            List<byte> response = new List<byte>();
 
-            // LOGIN_ACK token (0xAD)
-            // - Token type (1 byte): 0xAD
-            // - Token length (2 bytes): Length of data after this field
-            // - Interface (1 byte): 0 for SQL Server
-            // - TDS Version (4 bytes): Major, Minor, BuildNumHi, BuildNumLo
-            // - ProgName (variable): Program name "SQL Server" in Unicode
-            // - Major Version (1 byte): e.g., 15 for SQL Server 2019
-            // - Minor Version (1 byte): e.g., 0 for SQL Server 2019
-            // - BuildNum (2 bytes): e.g., 4153 for a specific build
+            // ΜΟΝΟ LOGIN_ACK + DONE
 
-            // DONE token (0xFD)
-            // - Token type (1 byte): 0xFD
-            // - Status (2 bytes): 0x0000 for success
-            // - CurCmd (2 bytes): 0x0001 for LOGIN
-            // - DoneRowCount (8 bytes): 0 for LOGIN
+            // LOGIN_ACK
+            response.Add(0xAD); // Token type
+            response.Add(0x36); // Length
+            response.Add(0x00);
+            response.Add(0x00); // Interface
 
-            byte[] programName = Encoding.Unicode.GetBytes("SQL Server");
+            // TDS Version
+            response.Add(0x04);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00);
 
-            // Calculate sizes
-            int loginAckSize = 1 + 2 + 1 + 4 + programName.Length + 4;
-            int doneSize = 1 + 2 + 2 + 8;
+            // "Microsoft SQL Server" σε Unicode
+            byte[] serverNameBytes = Encoding.Unicode.GetBytes("Microsoft SQL Server");
+            response.AddRange(serverNameBytes);
+            response.Add(0x00); // Null terminator
+            response.Add(0x00);
 
-            byte[] response = new byte[loginAckSize + doneSize];
-            int pos = 0;
+            // Version
+            response.Add(0x0F);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00);
 
-            // LOGIN_ACK token
-            response[pos++] = 0xAD; // Token type
+            // DONE
+            response.Add(0xFD);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00);
 
-            // Token length (2 bytes, little-endian)
-            int dataLength = loginAckSize - 3; // Excluding token type and length
-            response[pos++] = (byte)(dataLength & 0xFF);
-            response[pos++] = (byte)(dataLength >> 8);
-
-            // Interface type
-            response[pos++] = 0; // SQL Server
-
-            // TDS Version (4 bytes)
-            response[pos++] = 4; // 7.4
-            response[pos++] = 0;
-            response[pos++] = 0;
-            response[pos++] = 0;
-
-            // Program name
-            Buffer.BlockCopy(programName, 0, response, pos, programName.Length);
-            pos += programName.Length;
-
-            // Version info
-            response[pos++] = 15; // Major Version (SQL Server 2019)
-            response[pos++] = 0;  // Minor Version
-            response[pos++] = 0;  // Build Number (high byte)
-            response[pos++] = 0;  // Build Number (low byte)
-
-            // DONE token
-            response[pos++] = 0xFD; // Token type
-
-            // Status (2 bytes, little-endian) - 0x0000 for success
-            response[pos++] = 0;
-            response[pos++] = 0;
-
-            // Current command (2 bytes, little-endian) - 0x0001 for LOGIN
-            response[pos++] = 1;
-            response[pos++] = 0;
-
-            // Done row count (8 bytes, little-endian) - 0 for LOGIN
+            // Row count (8 bytes)
             for (int i = 0; i < 8; i++)
-            {
-                response[pos++] = 0;
-            }
+                response.Add(0x00);
 
-            return response;
+            return response.ToArray();
         }
 
         private string ExtractSqlQuery(byte[] batchData)
@@ -992,14 +1608,5 @@ namespace SqlRelayServer
         public byte[] TraceId { get; set; }          // 0x05
         public byte[] FedAuthRequired { get; set; }  // 0x06
         public byte[] Nonce { get; set; }            // 0x07
-    }
-
-    public class TdsSessionState
-    {
-        public Guid ConnectionId { get; set; }
-        public string ClientEndpoint { get; set; }
-        public string ClientHostname { get; set; }
-        public string Username { get; set; }
-        public string Database { get; set; }
-    }
+    }       
 }
