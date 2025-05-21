@@ -8,10 +8,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="ImprovedTdsListener.cs" />
+    <Compile Remove="SimpleTdsSettings.cs" />
+    <Compile Remove="TdsProtocolHelper.cs" />
+  </ItemGroup>
+
+
+
+  <ItemGroup>
     <Content Include="favicon.ico" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+    <PackageReference Include="Microsoft.Data.Tools.TdsLib" Version="0.2.2089.23" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 

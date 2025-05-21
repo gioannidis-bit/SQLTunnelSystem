@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.IO;
@@ -26,11 +27,16 @@ namespace SqlRelayServer
         }
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
-            Host.CreateDefaultBuilder(args)
-                .ConfigureWebHostDefaults(webBuilder =>
-                {
-                    webBuilder.UseStartup<Startup>();
-                });
+      Host.CreateDefaultBuilder(args)
+          // <-- run as a Windows Service when hosted on Windows
+          .UseWindowsService(options =>
+          {
+              options.ServiceName = "SQL Relay Server";
+          })
+          .ConfigureWebHostDefaults(webBuilder =>
+          {
+              webBuilder.UseStartup<Startup>();
+          });
     }
 
     public class QueryResultInfo
@@ -73,24 +79,9 @@ namespace SqlRelayServer
             // Προσθήκη HttpClient Factory
             services.AddHttpClient();
 
-            // Φόρτωση των ρυθμίσεων του TDS Listener από το αρχείο ρυθμίσεων
-            services.Configure<SimpleTdsSettings>(
-                _configuration.GetSection("TdsSettings"));
+       
 
-            // Φόρτωση ρυθμίσεων για τον απλό TDS Listener
-            services.Configure<SimpleTdsSettings>(options =>
-            {
-                options.ApiKey = "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
-                options.RelayInternalUrl = "http://localhost:5175";
-            });
-
-            // Καταγραφή των ρυθμίσεων για διαγνωστικούς σκοπούς
-            var tdsSettings = _configuration.GetSection("TdsSettings").Get<SimpleTdsSettings>();
-            var logger = services.BuildServiceProvider().GetRequiredService<ILogger<Startup>>();
-            logger.LogInformation("TDS Listener Settings: Address={Address}, Port={Port}, RelayUrl={RelayUrl}",
-                tdsSettings?.ListenAddress ?? "not set",
-                tdsSettings?.ListenPort ?? 0,
-                tdsSettings?.RelayInternalUrl ?? "not set");
+       
 
             // Add RegisteredServices as singleton for the TDS Listener
             services.AddSingleton(RegisteredServices);
@@ -100,7 +91,7 @@ namespace SqlRelayServer
 
             // Προσθήκη του TDS Listener ως hosted service
 
-            services.AddHostedService<ImprovedTdsListener>();
+         
 
             // services.AddHostedService<TdsListener>();
         }

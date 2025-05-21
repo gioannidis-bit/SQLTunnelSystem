@@ -130,6 +130,13 @@ namespace SqlRelayServer
 
                     // Process SQL batches
                     await ProcessSqlBatchesAsync(stream, sessionState, token);
+
+                    // Μετά το LOGIN phase
+                    _logger.LogInformation("Connection {ConnectionId}: Waiting for SQL batch...", connectionId);
+                    var nextPacket = await ReadTdsPacketAsync(stream, token);
+                    _logger.LogInformation("Connection {ConnectionId}: Received packet type: 0x{Type:X2}, Length: {Length}",
+                        connectionId, nextPacket?.Type ?? 0, nextPacket?.Length ?? 0);
+
                 }
                 catch (IOException ex)
                 {
@@ -1173,80 +1180,80 @@ namespace SqlRelayServer
 
         private byte[] BuildPreLoginResponse(TdsPreLoginOptions clientOptions)
         {
-            // Υπολογισμός μεγέθους δεδομένων
-            int dataSize = 6; // VERSION
-            dataSize += 1;    // ENCRYPTION
-            dataSize += 1;    // INSTOPT
-            dataSize += 4;    // THREADID
-            dataSize += 1;    // MARS
-
-            // Υπολογισμός offset headers
-            int headerSize = 5 * 5 + 1; // 5 bytes ανά token + 1 για τον terminator
-
-            byte[] response = new byte[headerSize + dataSize];
+            // Το πακέτο peer1_0 από το sql.txt δείχνει ότι χρειάζεται ένα διαφορετικό format
+            byte[] response = new byte[54]; // Αλλάξτε το μέγεθος αν χρειάζεται
             int offset = 0;
 
-            // VERSION token
-            response[offset++] = 0x00; // TOKEN
-            response[offset++] = (byte)(headerSize >> 8);       // Offset MSB
-            response[offset++] = (byte)(headerSize & 0xFF);     // Offset LSB
-            response[offset++] = 0x00; // Length MSB
-            response[offset++] = 0x06; // Length LSB
+            // Tokens
+            response[offset++] = 0x00; // VERSION
+            response[offset++] = 0x00;
+            response[offset++] = 0x24;
+            response[offset++] = 0x00;
+            response[offset++] = 0x06;
 
-            // ENCRYPTION token
-            response[offset++] = 0x01; // TOKEN
-            response[offset++] = (byte)((headerSize + 6) >> 8);     // Offset MSB
-            response[offset++] = (byte)((headerSize + 6) & 0xFF);   // Offset LSB
-            response[offset++] = 0x00; // Length MSB
-            response[offset++] = 0x01; // Length LSB
+            response[offset++] = 0x01; // ENCRYPTION
+            response[offset++] = 0x00;
+            response[offset++] = 0x2A;
+            response[offset++] = 0x00;
+            response[offset++] = 0x01;
 
-            // INSTOPT token
-            response[offset++] = 0x02; // TOKEN
-            response[offset++] = (byte)((headerSize + 7) >> 8);     // Offset MSB
-            response[offset++] = (byte)((headerSize + 7) & 0xFF);   // Offset LSB
-            response[offset++] = 0x00; // Length MSB
-            response[offset++] = 0x01; // Length LSB
+            response[offset++] = 0x02; // INSTOPT
+            response[offset++] = 0x00;
+            response[offset++] = 0x2B;
+            response[offset++] = 0x00;
+            response[offset++] = 0x01;
 
-            // THREADID token
-            response[offset++] = 0x03; // TOKEN
-            response[offset++] = (byte)((headerSize + 8) >> 8);     // Offset MSB
-            response[offset++] = (byte)((headerSize + 8) & 0xFF);   // Offset LSB
-            response[offset++] = 0x00; // Length MSB
-            response[offset++] = 0x04; // Length LSB
+            response[offset++] = 0x03; // THREADID
+            response[offset++] = 0x00;
+            response[offset++] = 0x2C;
+            response[offset++] = 0x00;
+            response[offset++] = 0x00; // Αλλαγή από 0x04 σε 0x00
 
-            // MARS token
-            response[offset++] = 0x04; // TOKEN
-            response[offset++] = (byte)((headerSize + 12) >> 8);    // Offset MSB
-            response[offset++] = (byte)((headerSize + 12) & 0xFF);  // Offset LSB
-            response[offset++] = 0x00; // Length MSB
-            response[offset++] = 0x01; // Length LSB
+            response[offset++] = 0x04; // MARS
+            response[offset++] = 0x00;
+            response[offset++] = 0x2C;
+            response[offset++] = 0x00;
+            response[offset++] = 0x01;
 
-            // Terminator
+            response[offset++] = 0x05; // TRACEID
+            response[offset++] = 0x00;
+            response[offset++] = 0x2D;
+            response[offset++] = 0x00;
+            response[offset++] = 0x00;
+
+            response[offset++] = 0x06; // FEDAUTH
+            response[offset++] = 0x00;
+            response[offset++] = 0x2D;
+            response[offset++] = 0x00;
+            response[offset++] = 0x01;
+
+            // End of tokens
             response[offset++] = 0xFF;
 
-            // Data section
-            // VERSION data
-            response[headerSize + 0] = 0x0F; // Major version
-            response[headerSize + 1] = 0x00; // Minor version
-            response[headerSize + 2] = 0x0B; // Build number LSB (δοκίμασε 0x0B αντί για 0x07)
-            response[headerSize + 3] = 0x0D; // Build number MSB
-            response[headerSize + 4] = 0x00; // Sub-build LSB
-            response[headerSize + 5] = 0x00; // Sub-build MSB
+            // Data
+            // VERSION (0x0F 0x00 0x0B 0x0D 0x00 0x00)
+            response[0x24] = 0x0F;
+            response[0x25] = 0x00;
+            response[0x26] = 0x0B;
+            response[0x27] = 0x0D;
+            response[0x28] = 0x00;
+            response[0x29] = 0x00;
 
-            // ENCRYPTION data
-            response[headerSize + 6] = 0x02; // ENCRYPT_NOT_SUP
+            // ENCRYPTION (0x02) - Αλλάξτε το σε 0x00 ή 0x02
+            response[0x2A] = 0x02; // ENCRYPT_NOT_SUP
 
-            // INSTOPT data
-            response[headerSize + 7] = 0x00; // No named instance
+            // INSTOPT (0x00)
+            response[0x2B] = 0x00;
 
-            // THREADID data
-            response[headerSize + 8] = 0x00;
-            response[headerSize + 9] = 0x00;
-            response[headerSize + 10] = 0x00;
-            response[headerSize + 11] = 0x00;
+            // THREADID - Κενό
 
-            // MARS data
-            response[headerSize + 12] = 0x00; // MARS disabled
+            // MARS (0x00)
+            response[0x2C] = 0x00;
+
+            // TRACEID - Κενό
+
+            // FEDAUTH (0x00)
+            response[0x2D] = 0x00;
 
             return response;
         }
@@ -1344,42 +1351,146 @@ namespace SqlRelayServer
         {
             List<byte> response = new List<byte>();
 
-            // ΜΟΝΟ LOGIN_ACK + DONE
+            // 1. ENVCHANGE token για Database (0xE3)
+            response.Add(0xE3); // ENVCHANGE token
+            response.Add(0x1B); // Length LSB
+            response.Add(0x00); // Length MSB
+            response.Add(0x01); // Type = DATABASE
+            response.Add(0x06); // Length of new value
+                                // "protel" σε Unicode
+            byte[] dbNameBytes = Encoding.Unicode.GetBytes("protel");
+            response.AddRange(dbNameBytes);
+            response.Add(0x06); // Length of old value
+                                // "master" σε Unicode
+            byte[] oldDbNameBytes = Encoding.Unicode.GetBytes("master");
+            response.AddRange(oldDbNameBytes);
 
-            // LOGIN_ACK
-            response.Add(0xAD); // Token type
-            response.Add(0x36); // Length
+            // 2. INFO message για Database change (0xAB)
+            response.Add(0xAB); // INFO token
+            response.Add(0x66); // Length LSB
+            response.Add(0x00); // Length MSB
+            response.Add(0x45); // Error number LSB
+            response.Add(0x16); // Error number MSB
+            response.Add(0x00); // Error number (3rd byte)
+            response.Add(0x00); // Error number (4th byte)
+            response.Add(0x02); // State
+            response.Add(0x00); // Class (information)
+            response.Add(0x25); // Length of message (37 chars)
+            response.Add(0x00); // MSB
+                                // "Changed database context to 'protel'." σε Unicode
+            byte[] dbChangeMsg = Encoding.Unicode.GetBytes("Changed database context to 'protel'.");
+            response.AddRange(dbChangeMsg);
+            // "DEMOSRV" σε Unicode (server name)
+            response.Add(0x07); // Length of server name
+            response.Add(0x00); // MSB
+            byte[] serverIdBytes = Encoding.Unicode.GetBytes("DEMOSRV");
+            response.AddRange(serverIdBytes);
+            response.Add(0x00); // Line number LSB
+            response.Add(0x01); // Line number (2nd byte)
+            response.Add(0x00); // Line number (3rd byte)
+            response.Add(0x00); // Line number (4th byte)
+
+            // 3. ENVCHANGE token για PACKET SIZE (0xE3)
+            response.Add(0xE3);
+            response.Add(0x08);
             response.Add(0x00);
-            response.Add(0x00); // Interface
+            response.Add(0x07); // Type = PACKET SIZE
+            response.Add(0x05); // Length of new value
+                                // "8000" σε ASCII
+            response.Add(0x38); // '8'
+            response.Add(0x00);
+            response.Add(0x30); // '0'
+            response.Add(0x00);
+            response.Add(0x30); // '0'
+            response.Add(0x00);
+            response.Add(0x30); // '0'
+            response.Add(0x00);
+            response.Add(0x00); // Length of old value = 0
 
-            // TDS Version
+            // 4. ENVCHANGE token για LANGUAGE (0xE3)
+            response.Add(0xE3);
+            response.Add(0x17);
+            response.Add(0x00);
+            response.Add(0x02); // Type = LANGUAGE
+            response.Add(0x0A); // Length of new value
+                                // "us_english" σε Unicode
+            byte[] langBytes = Encoding.Unicode.GetBytes("us_english");
+            response.AddRange(langBytes);
+            response.Add(0x00); // Length of old value = 0
+
+            // 5. INFO message για Language change
+            response.Add(0xAB);
+            response.Add(0x6A);
+            response.Add(0x00);
+            response.Add(0x47); // Error number
+            response.Add(0x16);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x01); // State
+            response.Add(0x00); // Class (information)
+            response.Add(0x27); // Length of message
+            response.Add(0x00);
+            // "Changed language setting to us_english." σε Unicode
+            byte[] langChangeMsg = Encoding.Unicode.GetBytes("Changed language setting to us_english.");
+            response.AddRange(langChangeMsg);
+            // "DEMOSRV" σε Unicode (server name)
+            response.Add(0x07);
+            response.Add(0x00);
+            byte[] serverIdBytes2 = Encoding.Unicode.GetBytes("DEMOSRV");
+            response.AddRange(serverIdBytes2);
+            response.Add(0x00); // Line number LSB
+            response.Add(0x01); // Line number (2nd byte)
+            response.Add(0x00); // Line number (3rd byte)
+            response.Add(0x00); // Line number (4th byte)
+
+            // 6. LOGIN_ACK token (0xAD)
+            response.Add(0xAD);
+            response.Add(0x36);
+            response.Add(0x00);
+            response.Add(0x01); // Interface type
+            response.Add(0x74); // TDS version
+            response.Add(0x00);
+            response.Add(0x00);
             response.Add(0x04);
-            response.Add(0x00);
-            response.Add(0x00);
-            response.Add(0x00);
-
             // "Microsoft SQL Server" σε Unicode
             byte[] serverNameBytes = Encoding.Unicode.GetBytes("Microsoft SQL Server");
             response.AddRange(serverNameBytes);
             response.Add(0x00); // Null terminator
             response.Add(0x00);
-
-            // Version
+            // Version 
             response.Add(0x0F);
             response.Add(0x00);
-            response.Add(0x00);
-            response.Add(0x00);
+            response.Add(0x11);
+            response.Add(0x0D);
 
-            // DONE
+            // 7. ENVCHANGE token για CHARSET/CODEPAGE (0xE3)
+            response.Add(0xE3);
+            response.Add(0x13);
+            response.Add(0x00);
+            response.Add(0x04); // Type = CHARSET
+            response.Add(0x04); // Length of new value
+                                // "800" σε Unicode
+            byte[] charsetBytes = Encoding.Unicode.GetBytes("800");
+            response.AddRange(charsetBytes);
+            response.Add(0x04); // Length of old value
+                                // "409" σε Unicode (προηγούμενο charset)
+            byte[] oldCharsetBytes = Encoding.Unicode.GetBytes("409");
+            response.AddRange(oldCharsetBytes);
+
+            // 8. DONE token (0xFD) - ΣΗΜΑΝΤΙΚΟ: Σωστό format
             response.Add(0xFD);
+            response.Add(0x10); // Status flags = DONE_COUNT (0x10)
+            response.Add(0x00);
+            response.Add(0x00); // CurCmd
+            response.Add(0x00);
+            response.Add(0x00); // RowCount LSB
             response.Add(0x00);
             response.Add(0x00);
             response.Add(0x00);
             response.Add(0x00);
-
-            // Row count (8 bytes)
-            for (int i = 0; i < 8; i++)
-                response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00);
+            response.Add(0x00); // RowCount MSB
 
             return response.ToArray();
         }

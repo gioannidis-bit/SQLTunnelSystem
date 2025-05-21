@@ -1,4 +1,16 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
+
 var builder = WebApplication.CreateBuilder(args);
+
+// If we’re on Windows, run as a service (instead of console)
+if (OperatingSystem.IsWindows())
+{
+    builder.Host.UseWindowsService(options =>
+    {
+        options.ServiceName = "SQL Web Client";
+    });
+}
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
