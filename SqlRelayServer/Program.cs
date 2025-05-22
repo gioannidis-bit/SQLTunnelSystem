@@ -19,6 +19,8 @@ using System.Net;
 using SqlRelayServer.Hubs;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.SignalR;
+using System.Collections.Generic;
+using System.Threading;
 
 namespace SqlRelayServer
 {
@@ -65,7 +67,9 @@ namespace SqlRelayServer
             services.AddSignalR(options =>
             {
                 options.EnableDetailedErrors = true;
-                options.MaximumReceiveMessageSize = 100L * 1024 * 1024; // 100MB
+                options.MaximumReceiveMessageSize = 500L * 1024 * 1024; // 500MB - INCREASED!
+                options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+                options.ClientTimeoutInterval = TimeSpan.FromMinutes(30); // EXTENDED for large queries
             });
 
             services.AddSingleton(RegisteredServices);
@@ -88,10 +92,138 @@ namespace SqlRelayServer
                 // ✅ SignalR Hub
                 endpoints.MapHub<SqlTunnelHub>("/sqlTunnelHub");
 
-                // ✅ SINGLE STREAMING ENDPOINT - FIXED URL PATH
+                // 🚀 RESTORED & OPTIMIZED: Traditional POST endpoint with internal streaming
+                endpoints.MapPost("/api/sql/execute", async context =>
+                {
+                    try
+                    {
+                        logger.LogInformation("🎯 SQL Execute endpoint called - using internal streaming");
+
+                        // ✅ Same authentication as before
+                        if (!ValidateClientAuth(context, logger))
+                        {
+                            context.Response.StatusCode = 401;
+                            await context.Response.WriteAsync("Unauthorized");
+                            return;
+                        }
+
+                        // ✅ Read request (same as before)
+                        using var reader = new StreamReader(context.Request.Body);
+                        var requestBody = await reader.ReadToEndAsync();
+                        var sqlRequest = JsonConvert.DeserializeObject<SqlRequest>(requestBody);
+
+                        if (string.IsNullOrEmpty(sqlRequest?.Query))
+                        {
+                            context.Response.StatusCode = 400;
+                            await context.Response.WriteAsync("Invalid request. Query is required.");
+                            return;
+                        }
+
+                        // ✅ Find available services (same as before)
+                        var availableServices = RegisteredServices.Values
+                            .Where(s => s.LastHeartbeat > DateTime.UtcNow.AddMinutes(-2))
+                            .ToList();
+
+                        if (availableServices.Count == 0)
+                        {
+                            context.Response.StatusCode = 503;
+                            await context.Response.WriteAsync("No SQL services currently available");
+                            return;
+                        }
+
+                        // ✅ Select target service (same as before)
+                        ServiceInfo targetService;
+                        if (!string.IsNullOrEmpty(sqlRequest.ServiceId) &&
+                            availableServices.Any(s => s.ServiceId == sqlRequest.ServiceId))
+                        {
+                            targetService = availableServices.First(s => s.ServiceId == sqlRequest.ServiceId);
+                        }
+                        else
+                        {
+                            targetService = availableServices.First();
+                        }
+
+                        // 🚀 NEW: Internal streaming collection
+                        var queryId = string.IsNullOrEmpty(sqlRequest.Id) ?
+                            Guid.NewGuid().ToString() : sqlRequest.Id;
+
+                        logger.LogInformation("🔄 Processing query {QueryId} via internal streaming for service {ServiceId}",
+                            queryId, targetService.ServiceId);
+
+                        // 🚀 Create streaming channel for internal collection
+                        var channel = Channel.CreateUnbounded<string>();
+                        SqlTunnelHub.QueryResultChannels[queryId] = channel;
+
+                        // ✅ Add to pending queries
+                        var queryInfo = new QueryInfo
+                        {
+                            Id = queryId,
+                            Query = sqlRequest.Query,
+                            Parameters = sqlRequest.Parameters,
+                            ServiceId = targetService.ServiceId,
+                            CreatedAt = DateTime.UtcNow
+                        };
+
+                        PendingQueries.TryAdd(queryId, queryInfo);
+                        logger.LogInformation("✅ Added query {QueryId} to pending queue", queryId);
+
+                        // 🚀 OPTIMIZED: Collect streaming results efficiently
+                        var finalResult = await CollectStreamingResults(channel, queryId, logger);
+
+                        // 📊 Store result for history
+                        var resultInfo = new QueryResultInfo
+                        {
+                            QueryId = queryId,
+                            Query = sqlRequest.Query,
+                            Result = finalResult.IsError ? null : finalResult.Data,
+                            Error = finalResult.IsError ? finalResult.Data : null,
+                            Timestamp = DateTime.UtcNow,
+                            ClientEndPoint = context.Connection.RemoteIpAddress?.ToString()
+                        };
+
+                        // 🗑️ Cleanup and store history
+                        PendingQueries.TryRemove(queryId, out _);
+                        SqlTunnelHub.QueryResultChannels.TryRemove(queryId, out _);
+
+                        // Maintain recent results (limit to 50)
+                        while (RecentQueryResults.Count >= 50)
+                        {
+                            var oldestKey = RecentQueryResults.OrderBy(kv => kv.Value.Timestamp).FirstOrDefault().Key;
+                            if (!string.IsNullOrEmpty(oldestKey))
+                            {
+                                RecentQueryResults.TryRemove(oldestKey, out _);
+                            }
+                            else break;
+                        }
+                        RecentQueryResults.TryAdd(queryId, resultInfo);
+
+                        // ✅ Return response (same format as before)
+                        context.Response.ContentType = "application/json";
+
+                        if (finalResult.IsError)
+                        {
+                            context.Response.StatusCode = 500;
+                            await context.Response.WriteAsync(JsonConvert.SerializeObject(new { Error = finalResult.Data }));
+                        }
+                        else
+                        {
+                            await context.Response.WriteAsync(finalResult.Data);
+                        }
+
+                        logger.LogInformation("✅ Query {QueryId} completed successfully", queryId);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "❌ Error processing SQL execution request");
+                        context.Response.StatusCode = 500;
+                        await context.Response.WriteAsync($"Internal server error: {ex.Message}");
+                    }
+                });
+
+                // ✅ Keep streaming endpoint for future direct streaming needs
                 endpoints.MapGet("/api/sql/execute-stream", async context =>
                 {
-                    logger.LogInformation("🔄 Streaming endpoint called");
+                    logger.LogInformation("🔄 Direct streaming endpoint called");
 
                     try
                     {
@@ -106,9 +238,6 @@ namespace SqlRelayServer
                         var query = context.Request.Query["query"];
                         var serviceId = context.Request.Query["serviceId"];
 
-                        logger.LogInformation("📝 Streaming request - Query length: {Length}, ServiceId: {ServiceId}",
-                            query.ToString().Length, serviceId.ToString());
-
                         if (string.IsNullOrEmpty(query))
                         {
                             context.Response.StatusCode = 400;
@@ -116,14 +245,12 @@ namespace SqlRelayServer
                             return;
                         }
 
-                        // Find available service
                         var availableServices = RegisteredServices.Values
                             .Where(s => s.LastHeartbeat > DateTime.UtcNow.AddMinutes(-2))
                             .ToList();
 
                         if (availableServices.Count == 0)
                         {
-                            logger.LogWarning("⚠️ No SQL services available for streaming");
                             context.Response.StatusCode = 503;
                             await context.Response.WriteAsync("No SQL services currently available");
                             return;
@@ -134,13 +261,9 @@ namespace SqlRelayServer
                             : availableServices.FirstOrDefault(s => s.ServiceId == serviceId) ?? availableServices.First();
 
                         var queryId = Guid.NewGuid().ToString();
-                        logger.LogInformation("🆔 Creating streaming query {QueryId} for service {ServiceId}", queryId, targetService.ServiceId);
-
-                        // Create channel for streaming results
                         var channel = Channel.CreateUnbounded<string>();
                         SqlTunnelHub.QueryResultChannels[queryId] = channel;
 
-                        // Add to pending queries
                         var queryInfo = new QueryInfo
                         {
                             Id = queryId,
@@ -151,44 +274,32 @@ namespace SqlRelayServer
                         };
 
                         PendingQueries.TryAdd(queryId, queryInfo);
-                        logger.LogInformation("✅ Added streaming query {QueryId} to pending queue", queryId);
 
-                        // Set response for streaming
                         context.Response.ContentType = "application/json";
-
-                        // Start streaming response
-                        await context.Response.WriteAsync("["); // Start JSON array
+                        await context.Response.WriteAsync("[");
                         bool isFirst = true;
 
-                        // Read from channel and stream to client
                         await foreach (var chunk in channel.Reader.ReadAllAsync())
                         {
-                            if (!isFirst)
-                                await context.Response.WriteAsync(",");
-
+                            if (!isFirst) await context.Response.WriteAsync(",");
                             await context.Response.WriteAsync(chunk);
                             await context.Response.Body.FlushAsync();
                             isFirst = false;
                         }
 
-                        await context.Response.WriteAsync("]"); // End JSON array
-
-                        // Cleanup
+                        await context.Response.WriteAsync("]");
                         SqlTunnelHub.QueryResultChannels.TryRemove(queryId, out _);
                         PendingQueries.TryRemove(queryId, out _);
-
-                        logger.LogInformation("✅ Streaming query {QueryId} completed", queryId);
-
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "❌ Error in streaming endpoint");
+                        logger.LogError(ex, "❌ Error in direct streaming endpoint");
                         context.Response.StatusCode = 500;
                         await context.Response.WriteAsync($"Streaming error: {ex.Message}");
                     }
                 });
 
-                // ✅ STATUS ENDPOINT
+                // ✅ STATUS ENDPOINT (unchanged)
                 endpoints.MapGet("/api/status", async context =>
                 {
                     try
@@ -199,8 +310,6 @@ namespace SqlRelayServer
                             await context.Response.WriteAsync("Unauthorized");
                             return;
                         }
-
-                        logger.LogInformation($"📊 Total registered services: {RegisteredServices.Count}");
 
                         var activeServices = RegisteredServices.Values
                             .Where(s => s.LastHeartbeat > DateTime.UtcNow.AddMinutes(-2))
@@ -228,7 +337,7 @@ namespace SqlRelayServer
                     }
                 });
 
-                // ✅ SERVICE HEARTBEAT
+                // ✅ SERVICE ENDPOINTS (unchanged but optimized)
                 endpoints.MapPost("/api/services/heartbeat", async context =>
                 {
                     try
@@ -241,7 +350,6 @@ namespace SqlRelayServer
                         }
 
                         var serviceId = context.Request.Headers["X-Service-ID"].ToString();
-
                         string requestBody;
                         using (var reader = new StreamReader(context.Request.Body))
                         {
@@ -250,17 +358,16 @@ namespace SqlRelayServer
 
                         var heartbeatData = JsonConvert.DeserializeObject<dynamic>(requestBody);
 
-                        RegisteredServices.AddOrUpdate(
-                            serviceId,
-                                   id => new ServiceInfo
-                                   {
-                                       ServiceId = id,
-                                       DisplayName = heartbeatData?.DisplayName ?? id,
-                                       Description = heartbeatData?.Description ?? "",
-                                       Version = heartbeatData?.Version ?? "1.0",
-                                       ServerInfo = heartbeatData?.ServerInfo ?? "",
-                                       LastHeartbeat = DateTime.UtcNow
-                                   },
+                        RegisteredServices.AddOrUpdate(serviceId,
+                            id => new ServiceInfo
+                            {
+                                ServiceId = id,
+                                DisplayName = heartbeatData?.DisplayName ?? id,
+                                Description = heartbeatData?.Description ?? "",
+                                Version = heartbeatData?.Version ?? "1.0",
+                                ServerInfo = heartbeatData?.ServerInfo ?? "",
+                                LastHeartbeat = DateTime.UtcNow
+                            },
                             (id, existing) => {
                                 existing.LastHeartbeat = DateTime.UtcNow;
                                 if (heartbeatData != null)
@@ -275,8 +382,6 @@ namespace SqlRelayServer
 
                         context.Response.StatusCode = 200;
                         await context.Response.WriteAsync("OK");
-
-                        logger.LogInformation($"💓 Service {serviceId} heartbeat received");
                     }
                     catch (Exception ex)
                     {
@@ -286,7 +391,6 @@ namespace SqlRelayServer
                     }
                 });
 
-                // ✅ PENDING QUERIES
                 endpoints.MapGet("/api/queries/pending", async context =>
                 {
                     try
@@ -304,20 +408,9 @@ namespace SqlRelayServer
                         {
                             serviceInfo.LastHeartbeat = DateTime.UtcNow;
                         }
-                        else
-                        {
-                            RegisteredServices.TryAdd(
-                                serviceId,
-                                new ServiceInfo
-                                {
-                                    ServiceId = serviceId,
-                                    LastHeartbeat = DateTime.UtcNow
-                                });
-                        }
 
                         var pendingQueries = PendingQueries.Values
-                            .Where(q => q.ServiceId == serviceId &&
-                                   q.CreatedAt > DateTime.UtcNow.AddMinutes(-5))
+                            .Where(q => q.ServiceId == serviceId && q.CreatedAt > DateTime.UtcNow.AddMinutes(-10)) // Extended timeout
                             .ToList();
 
                         context.Response.ContentType = "application/json";
@@ -333,119 +426,7 @@ namespace SqlRelayServer
                     }
                 });
 
-                // ✅ QUERY RESULTS
-                endpoints.MapPost("/api/queries/result", async context =>
-                {
-                    try
-                    {
-                        if (!ValidateServiceAuth(context, logger))
-                        {
-                            context.Response.StatusCode = 401;
-                            await context.Response.WriteAsync("Unauthorized");
-                            return;
-                        }
-
-                        string requestBody;
-                        QueryResult queryResult;
-
-                        try
-                        {
-                            using var reader = new StreamReader(context.Request.Body);
-                            requestBody = await reader.ReadToEndAsync();
-
-                            if (requestBody.Length > 50_000_000) // 50MB limit
-                            {
-                                logger.LogError("❌ Request body too large: {Size} characters", requestBody.Length);
-                                context.Response.StatusCode = 413;
-                                await context.Response.WriteAsync("Request body too large");
-                                return;
-                            }
-
-                            logger.LogDebug("📝 Received request body of {Size} characters", requestBody.Length);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogError(ex, "❌ Error reading request body");
-                            context.Response.StatusCode = 400;
-                            await context.Response.WriteAsync("Error reading request body");
-                            return;
-                        }
-
-                        try
-                        {
-                            queryResult = JsonConvert.DeserializeObject<QueryResult>(requestBody);
-                        }
-                        catch (JsonException ex)
-                        {
-                            logger.LogError(ex, "❌ Error deserializing JSON. Body size: {Size}", requestBody.Length);
-                            context.Response.StatusCode = 400;
-                            await context.Response.WriteAsync("Invalid JSON format");
-                            return;
-                        }
-
-                        if (string.IsNullOrEmpty(queryResult?.QueryId))
-                        {
-                            context.Response.StatusCode = 400;
-                            await context.Response.WriteAsync("Invalid request. QueryId is required.");
-                            return;
-                        }
-
-                        // Remove from pending
-                        PendingQueries.TryRemove(queryResult.QueryId, out var queryInfo);
-                        logger.LogInformation("🗑️ Removed query {QueryId} from pending queue", queryResult.QueryId);
-
-                        // Store result
-                        QueryResults.TryAdd(queryResult.QueryId, new QueryResult
-                        {
-                            QueryId = queryResult.QueryId,
-                            Result = queryResult.Result,
-                            Error = queryResult.Error,
-                            Timestamp = queryResult.Timestamp
-                        });
-
-                        // Store in recent results
-                        if (queryInfo != null)
-                        {
-                            var resultInfo = new QueryResultInfo
-                            {
-                                QueryId = queryResult.QueryId,
-                                Query = queryInfo.Query,
-                                Result = queryResult.Result,
-                                Error = queryResult.Error,
-                                Timestamp = queryResult.Timestamp,
-                                ClientEndPoint = context.Connection.RemoteIpAddress.ToString()
-                            };
-
-                            while (RecentQueryResults.Count >= 50)
-                            {
-                                var oldestKey = RecentQueryResults.OrderBy(kv => kv.Value.Timestamp).FirstOrDefault().Key;
-                                if (!string.IsNullOrEmpty(oldestKey))
-                                {
-                                    RecentQueryResults.TryRemove(oldestKey, out _);
-                                }
-                                else
-                                {
-                                    break;
-                                }
-                            }
-
-                            RecentQueryResults.TryAdd(queryResult.QueryId, resultInfo);
-                        }
-
-                        context.Response.StatusCode = 200;
-                        await context.Response.WriteAsync("OK");
-
-                        logger.LogInformation("✅ Successfully processed result for query {QueryId}", queryResult.QueryId);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "❌ Unexpected error processing query result");
-                        context.Response.StatusCode = 500;
-                        await context.Response.WriteAsync($"Internal server error: {ex.Message}");
-                    }
-                });
-
-                // ✅ QUERY RESULTS HTML PAGE
+                // ✅ QUERY RESULTS HTML PAGE (unchanged)
                 endpoints.MapGet("/api/query-results", async context =>
                 {
                     string apiKeyFromQuery = context.Request.Query["apiKey"];
@@ -461,19 +442,8 @@ namespace SqlRelayServer
                     }
 
                     context.Response.ContentType = "text/html";
-
-                    await context.Response.WriteAsync("<!DOCTYPE html>\n");
-                    await context.Response.WriteAsync("<html><head><title>SQL Query Results</title>");
-                    await context.Response.WriteAsync("<style>body{font-family:Arial,sans-serif;margin:20px;} ");
-                    await context.Response.WriteAsync("table{border-collapse:collapse;width:100%;} ");
-                    await context.Response.WriteAsync("th,td{border:1px solid #ddd;padding:8px;text-align:left;} ");
-                    await context.Response.WriteAsync("th{background-color:#f2f2f2;} ");
-                    await context.Response.WriteAsync("tr:nth-child(even){background-color:#f9f9f9;} ");
-                    await context.Response.WriteAsync(".query{margin-bottom:30px;border:1px solid #ccc;padding:10px;border-radius:5px;} ");
-                    await context.Response.WriteAsync(".query-text{font-family:monospace;background:#eee;padding:5px;margin:10px 0;} ");
-                    await context.Response.WriteAsync(".timestamp{color:#666;font-size:0.9em;} ");
-                    await context.Response.WriteAsync("</style></head><body>");
-
+                    await context.Response.WriteAsync("<!DOCTYPE html>\n<html><head><title>SQL Query Results</title>");
+                    await context.Response.WriteAsync("<style>body{font-family:Arial,sans-serif;margin:20px;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #ddd;padding:8px;text-align:left;} th{background-color:#f2f2f2;} tr:nth-child(even){background-color:#f9f9f9;} .query{margin-bottom:30px;border:1px solid #ccc;padding:10px;border-radius:5px;} .query-text{font-family:monospace;background:#eee;padding:5px;margin:10px 0;} .timestamp{color:#666;font-size:0.9em;} </style></head><body>");
                     await context.Response.WriteAsync("<h1>Recent SQL Query Results</h1>");
 
                     if (RecentQueryResults.Count == 0)
@@ -482,10 +452,7 @@ namespace SqlRelayServer
                     }
                     else
                     {
-                        var sortedResults = RecentQueryResults.Values
-                            .OrderByDescending(r => r.Timestamp)
-                            .ToList();
-
+                        var sortedResults = RecentQueryResults.Values.OrderByDescending(r => r.Timestamp).ToList();
                         foreach (var result in sortedResults)
                         {
                             await context.Response.WriteAsync($"<div class='query'>");
@@ -510,9 +477,7 @@ namespace SqlRelayServer
                                 var dataTable = JsonConvert.DeserializeObject<DataTable>(result.Result);
                                 if (dataTable != null && dataTable.Rows.Count > 0)
                                 {
-                                    await context.Response.WriteAsync("<table>");
-
-                                    await context.Response.WriteAsync("<tr>");
+                                    await context.Response.WriteAsync("<table><tr>");
                                     foreach (DataColumn column in dataTable.Columns)
                                     {
                                         await context.Response.WriteAsync($"<th>{WebUtility.HtmlEncode(column.ColumnName)}</th>");
@@ -529,45 +494,159 @@ namespace SqlRelayServer
                                         }
                                         await context.Response.WriteAsync("</tr>");
                                     }
-
                                     await context.Response.WriteAsync("</table>");
-                                }
-                                else
-                                {
-                                    await context.Response.WriteAsync("<div>No rows in result</div>");
                                 }
                             }
                             catch
                             {
-                                await context.Response.WriteAsync("<div>Raw result:</div>");
                                 await context.Response.WriteAsync($"<pre>{WebUtility.HtmlEncode(result.Result)}</pre>");
                             }
-
                             await context.Response.WriteAsync("</div>");
                         }
                     }
-
-                    await context.Response.WriteAsync("<script>");
-                    await context.Response.WriteAsync("setTimeout(function() { location.reload(); }, 120000);");
-                    await context.Response.WriteAsync("</script>");
-
-                    await context.Response.WriteAsync("</body></html>");
+                    await context.Response.WriteAsync("<script>setTimeout(function() { location.reload(); }, 120000);</script></body></html>");
                 });
             });
+        }
+
+        // 🚀 NEW: Optimized streaming result collection
+        private async Task<StreamingResult> CollectStreamingResults(Channel<string> channel, string queryId, ILogger logger)
+        {
+            try
+            {
+                var chunks = new List<string>();
+                var timeout = TimeSpan.FromMinutes(15); // Extended timeout for large queries
+                var startTime = DateTime.UtcNow;
+
+                logger.LogInformation("🔄 Starting to collect streaming results for query {QueryId}", queryId);
+
+                await foreach (var chunk in channel.Reader.ReadAllAsync())
+                {
+                    // Check timeout
+                    if (DateTime.UtcNow - startTime > timeout)
+                    {
+                        logger.LogWarning("⏰ Query {QueryId} timed out after {Minutes} minutes", queryId, timeout.TotalMinutes);
+                        return new StreamingResult { IsError = true, Data = "Query execution timed out" };
+                    }
+
+                    chunks.Add(chunk);
+
+                    // Log progress for very large result sets
+                    if (chunks.Count % 100 == 0)
+                    {
+                        logger.LogDebug("📊 Collected {ChunkCount} chunks for query {QueryId}", chunks.Count, queryId);
+                    }
+                }
+
+                logger.LogInformation("✅ Collected {ChunkCount} chunks for query {QueryId}", chunks.Count, queryId);
+
+                // 🚀 OPTIMIZED: Process chunks efficiently
+                return ProcessStreamingChunks(chunks, queryId, logger);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "❌ Error collecting streaming results for query {QueryId}", queryId);
+                return new StreamingResult { IsError = true, Data = $"Error collecting results: {ex.Message}" };
+            }
+        }
+
+        // 🚀 NEW: Efficient chunk processing
+        private StreamingResult ProcessStreamingChunks(List<string> chunks, string queryId, ILogger logger)
+        {
+            try
+            {
+                if (chunks.Count == 0)
+                {
+                    return new StreamingResult { IsError = false, Data = "[]" };
+                }
+
+                var allData = new List<DataTable>();
+                var hasError = false;
+                string errorMessage = null;
+
+                foreach (var chunk in chunks)
+                {
+                    // Handle different chunk types
+                    if (chunk.StartsWith("Starting") || chunk.StartsWith("Query execution completed"))
+                    {
+                        continue; // Skip status messages
+                    }
+                    else if (chunk.StartsWith("SCHEMA:"))
+                    {
+                        continue; // Skip schema for now
+                    }
+                    else if (chunk.StartsWith("BATCH:"))
+                    {
+                        // Extract batch data
+                        var parts = chunk.Split(':', 3);
+                        if (parts.Length == 3)
+                        {
+                            try
+                            {
+                                var batchData = JsonConvert.DeserializeObject<DataTable>(parts[2]);
+                                if (batchData != null && batchData.Rows.Count > 0)
+                                {
+                                    allData.Add(batchData);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning("⚠️ Error parsing batch for query {QueryId}: {Error}", queryId, ex.Message);
+                            }
+                        }
+                    }
+                    else if (chunk.StartsWith("SUMMARY:"))
+                    {
+                        continue; // Skip summary
+                    }
+                    else if (chunk.StartsWith("Error:"))
+                    {
+                        hasError = true;
+                        errorMessage = chunk.Substring(6);
+                        break;
+                    }
+                }
+
+                if (hasError)
+                {
+                    return new StreamingResult { IsError = true, Data = errorMessage };
+                }
+
+                // 🚀 OPTIMIZED: Combine all DataTables efficiently
+                if (allData.Count == 0)
+                {
+                    return new StreamingResult { IsError = false, Data = "[]" };
+                }
+
+                var combinedTable = allData[0].Clone(); // Create schema
+                foreach (var table in allData)
+                {
+                    foreach (DataRow row in table.Rows)
+                    {
+                        combinedTable.ImportRow(row);
+                    }
+                }
+
+                var result = JsonConvert.SerializeObject(combinedTable);
+                logger.LogInformation("✅ Combined {TableCount} batches into {RowCount} total rows for query {QueryId}",
+                    allData.Count, combinedTable.Rows.Count, queryId);
+
+                return new StreamingResult { IsError = false, Data = result };
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "❌ Error processing chunks for query {QueryId}", queryId);
+                return new StreamingResult { IsError = true, Data = $"Error processing results: {ex.Message}" };
+            }
         }
 
         private bool ValidateClientAuth(HttpContext context, ILogger logger)
         {
             if (!context.Request.Headers.TryGetValue("X-API-Key", out var apiKey))
             {
-                logger.LogWarning("❌ No API key found in request headers");
                 return false;
             }
-
-            var validApiKey = "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
-
-            logger.LogInformation($"🔑 Received API key: {apiKey}, Valid key: {validApiKey}, Match: {apiKey == validApiKey}");
-            return apiKey == validApiKey;
+            return apiKey == "\\ql4CkI!{sI\\W[*_1x]{A+Gw[vw+A\\ti";
         }
 
         private bool ValidateServiceAuth(HttpContext context, ILogger logger)
@@ -587,7 +666,14 @@ namespace SqlRelayServer
         }
     }
 
-    // ✅ DATA MODELS
+    // 🚀 NEW: Streaming result wrapper
+    public class StreamingResult
+    {
+        public bool IsError { get; set; }
+        public string Data { get; set; }
+    }
+
+    // ✅ DATA MODELS (unchanged)
     public class QueryResultInfo
     {
         public string QueryId { get; set; }

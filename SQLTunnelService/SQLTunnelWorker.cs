@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.IO;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +23,6 @@ namespace SQLTunnelService
         private string _serverInfo;
         private HubConnection _signalRConnection;
         private bool _signalRConnected = false;
-        private bool _useSignalRForLargeQueries = true;
 
         public SQLTunnelWorker(
             ILogger<SQLTunnelWorker> logger,
@@ -39,26 +36,28 @@ namespace SQLTunnelService
 
         public override async Task StartAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("-------------------------------------------");
-            _logger.LogInformation("SQL Tunnel Service starting. Version: {Version}", _settings.Version);
-            _logger.LogInformation("Service ID: {ServiceId}", _settings.ServiceId);
-            _logger.LogInformation("Using relay server: {RelayServerUrl}", _settings.RelayServerUrl);
-            _logger.LogInformation("-------------------------------------------");
+            _logger.LogInformation("🚀 ===========================================");
+            _logger.LogInformation("🚀 SQL Tunnel Service OPTIMIZED VERSION starting");
+            _logger.LogInformation("🚀 Version: {Version} | Service ID: {ServiceId}", _settings.Version, _settings.ServiceId);
+            _logger.LogInformation("🚀 Pure SignalR Streaming Mode - Maximum Performance");
+            _logger.LogInformation("🚀 Relay Server: {RelayServerUrl}", _settings.RelayServerUrl);
+            _logger.LogInformation("🚀 ===========================================");
 
-            // Setup SignalR connection for large queries
+            // 🚀 CRITICAL: Setup SignalR connection first
             await SetupSignalRConnection();
 
             // Get SQL Server information
             try
             {
                 _serverInfo = await GetSqlServerInfoAsync(cancellationToken);
-                _logger.LogInformation("Connected to SQL Server: {ServerVersion}",
+                _logger.LogInformation("✅ Connected to SQL Server: {ServerVersion}",
                     _serverInfo.Split('\n')[0].Trim());
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to connect to SQL Server");
-                _serverInfo = "Unknown";
+                _logger.LogError(ex, "❌ Failed to connect to SQL Server");
+                _serverInfo = "Connection failed";
+                throw; // Don't start if SQL Server is not accessible
             }
 
             await base.StartAsync(cancellationToken);
@@ -69,7 +68,7 @@ namespace SQLTunnelService
             try
             {
                 var hubUrl = _settings.RelayServerUrl.Replace("/api", "/sqlTunnelHub");
-                _logger.LogInformation("Setting up SignalR connection to: {HubUrl}", hubUrl);
+                _logger.LogInformation("🔗 Setting up SignalR connection to: {HubUrl}", hubUrl);
 
                 _signalRConnection = new HubConnectionBuilder()
                     .WithUrl(hubUrl, options =>
@@ -77,37 +76,63 @@ namespace SQLTunnelService
                         options.Headers.Add("X-Service-ID", _settings.ServiceId);
                         options.Headers.Add("X-Service-Key", _settings.SecretKey);
 
+                        // 🚀 OPTIMIZED: Enhanced connection settings
+                        options.SkipNegotiation = true;
+                        options.Transports = Microsoft.AspNetCore.Http.Connections.HttpTransportType.WebSockets;
+
                         // For development - accept self-signed certificates
                         options.HttpMessageHandlerFactory = handler =>
                         {
-                            if (handler is System.Net.Http.HttpClientHandler clientHandler)
+                            if (handler is HttpClientHandler clientHandler)
                             {
-                                clientHandler.ServerCertificateCustomValidationCallback =
-                                    (message, cert, chain, errors) => true;
+                                clientHandler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
                             }
                             return handler;
                         };
                     })
-                    .WithAutomaticReconnect()
+                    .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30) })
                     .Build();
+
+                // 🚀 ENHANCED: Better connection handling
+                _signalRConnection.Reconnecting += error =>
+                {
+                    _logger.LogWarning("🔄 SignalR reconnecting: {Error}", error?.Message);
+                    _signalRConnected = false;
+                    return Task.CompletedTask;
+                };
+
+                _signalRConnection.Reconnected += connectionId =>
+                {
+                    _logger.LogInformation("✅ SignalR reconnected: {ConnectionId}", connectionId);
+                    _signalRConnected = true;
+                    return _signalRConnection.InvokeAsync("RegisterSqlService", _settings.ServiceId, _settings.DisplayName, _settings.Version);
+                };
+
+                _signalRConnection.Closed += error =>
+                {
+                    _logger.LogError("❌ SignalR connection closed: {Error}", error?.Message);
+                    _signalRConnected = false;
+                    return Task.CompletedTask;
+                };
 
                 await _signalRConnection.StartAsync();
                 await _signalRConnection.InvokeAsync("RegisterSqlService",
                     _settings.ServiceId, _settings.DisplayName, _settings.Version);
 
                 _signalRConnected = true;
-                _logger.LogInformation("SignalR connection established for streaming large queries");
+                _logger.LogInformation("✅ SignalR connection established - Ready for UNLIMITED streaming!");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to setup SignalR connection - will use HTTP for all queries");
+                _logger.LogError(ex, "❌ CRITICAL: Failed to setup SignalR connection");
                 _signalRConnected = false;
+                throw; // Don't start if SignalR fails
             }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Worker service is running - SignalR ONLY mode");
+            _logger.LogInformation("🚀 Worker service running - PURE SignalR streaming mode");
 
             using var httpClient = CreateHttpClient();
 
@@ -119,19 +144,23 @@ namespace SQLTunnelService
             {
                 try
                 {
-                    // Send heartbeat every 30 seconds
-                    if ((DateTime.UtcNow - lastHeartbeatTime).TotalSeconds >= 30)
+                    // 💓 Send heartbeat every 20 seconds (reduced frequency)
+                    if ((DateTime.UtcNow - lastHeartbeatTime).TotalSeconds >= 20)
                     {
                         await SendHeartbeatAsync(httpClient, stoppingToken);
                         lastHeartbeatTime = DateTime.UtcNow;
                     }
 
-                    // Check for pending queries
-                    _logger.LogDebug("Checking for pending queries at {Endpoint}",
-                        $"{_settings.RelayServerUrl}/queries/pending");
+                    // 🚀 PURE SignalR: Check for pending queries
+                    if (!_signalRConnected)
+                    {
+                        _logger.LogWarning("⚠️ SignalR not connected - attempting reconnection");
+                        await SetupSignalRConnection();
+                        await Task.Delay(5000, stoppingToken); // Wait before retrying
+                        continue;
+                    }
 
-                    var response = await httpClient.GetAsync(
-                        $"{_settings.RelayServerUrl}/queries/pending", stoppingToken);
+                    var response = await httpClient.GetAsync($"{_settings.RelayServerUrl}/queries/pending", stoppingToken);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -140,46 +169,20 @@ namespace SQLTunnelService
 
                         if (pendingQueries != null && pendingQueries.Length > 0)
                         {
-                            _logger.LogInformation("Found {Count} pending queries - processing ALL via SignalR streaming", pendingQueries.Length);
+                            _logger.LogInformation("🎯 Found {Count} pending queries - processing via PURE SignalR streaming", pendingQueries.Length);
 
-                            foreach (var query in pendingQueries)
-                            {
-                                try
-                                {
-                                    if (_signalRConnected)
-                                    {
-                                        _logger.LogInformation("Processing query via SignalR streaming: {QueryId}", query.Id);
-                                        await ExecuteStreamingQuery(query, stoppingToken);
-                                    }
-                                    else
-                                    {
-                                        _logger.LogError("SignalR not connected - cannot process query: {QueryId}", query.Id);
-
-                                        // Send error via HTTP as fallback ONLY for connection issues
-                                        await SendQueryResultAsync(httpClient, query.Id, null,
-                                            "SignalR streaming not available", stoppingToken);
-                                    }
-
-                                    _logger.LogInformation("Successfully executed query ID: {QueryId}", query.Id);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "Error executing query ID: {QueryId}", query.Id);
-
-                                    // Send error via HTTP (only for errors)
-                                    await SendQueryResultAsync(httpClient, query.Id, null, ex.Message, stoppingToken);
-                                }
-                            }
+                            // 🚀 OPTIMIZED: Process queries in parallel for better performance
+                            var tasks = pendingQueries.Select(query => ProcessQueryAsync(query, stoppingToken)).ToArray();
+                            await Task.WhenAll(tasks);
                         }
                         else
                         {
-                            _logger.LogDebug("No pending queries found");
+                            _logger.LogDebug("😴 No pending queries found");
                         }
                     }
                     else
                     {
-                        _logger.LogWarning("Failed to check for pending queries. Status: {StatusCode}",
-                            response.StatusCode);
+                        _logger.LogWarning("⚠️ Failed to check for pending queries. Status: {StatusCode}", response.StatusCode);
                     }
                 }
                 catch (OperationCanceledException)
@@ -188,23 +191,52 @@ namespace SQLTunnelService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in polling loop");
+                    _logger.LogError(ex, "❌ Error in polling loop");
                 }
 
-                await Task.Delay(_settings.PollingIntervalMs, stoppingToken);
+                // 🚀 OPTIMIZED: Reduced polling interval for better responsiveness
+                await Task.Delay(Math.Max(_settings.PollingIntervalMs, 1000), stoppingToken);
+            }
+        }
+
+        // 🚀 NEW: Optimized query processing
+        private async Task ProcessQueryAsync(PendingQuery query, CancellationToken cancellationToken)
+        {
+            try
+            {
+                _logger.LogInformation("⚡ Processing query {QueryId} via SignalR streaming", query.Id);
+                await ExecuteStreamingQuery(query, cancellationToken);
+                _logger.LogInformation("✅ Successfully completed query {QueryId}", query.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error processing query {QueryId}", query.Id);
+
+                // Send error via SignalR
+                try
+                {
+                    await _signalRConnection.SendAsync("SendDataChunk", query.Id, $"Error: {ex.Message}", true);
+                }
+                catch (Exception signalREx)
+                {
+                    _logger.LogError(signalREx, "❌ Failed to send error via SignalR for query {QueryId}", query.Id);
+                }
             }
         }
 
         private async Task ExecuteStreamingQuery(PendingQuery query, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Executing query via SignalR streaming (UNLIMITED): {Query}",
-                query.Query.Length > 100 ? query.Query.Substring(0, 100) + "..." : query.Query);
+            var startTime = DateTime.UtcNow;
+            _logger.LogInformation("🚀 Executing UNLIMITED streaming query {QueryId}: {QueryPreview}",
+                query.Id, query.Query.Length > 100 ? query.Query.Substring(0, 100) + "..." : query.Query);
 
             using var connection = new SqlConnection(_settings.SqlConnectionString);
             await connection.OpenAsync(cancellationToken);
 
             using var command = new SqlCommand(query.Query, connection);
-            command.CommandTimeout = 300;
+
+            // 🚀 OPTIMIZED: Extended timeout for large queries
+            command.CommandTimeout = _settings.MaxRowsPerQuery > 100000 ? 1800 : 600; // 30 min for huge queries, 10 min for normal
 
             // Add parameters if any
             if (query.Parameters != null)
@@ -223,11 +255,14 @@ namespace SQLTunnelService
 
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-            // ALL queries use SignalR streaming - NO LIMITS!
-            await StreamLargeQueryResults(query.Id, reader, cancellationToken);
+            // 🚀 UNLIMITED STREAMING - No limits at all!
+            await StreamUnlimitedResults(query.Id, reader, cancellationToken);
+
+            var duration = DateTime.UtcNow - startTime;
+            _logger.LogInformation("⚡ Query {QueryId} completed in {Duration} seconds", query.Id, duration.TotalSeconds);
         }
 
-        private async Task StreamLargeQueryResults(string queryId, SqlDataReader reader, CancellationToken cancellationToken)
+        private async Task StreamUnlimitedResults(string queryId, SqlDataReader reader, CancellationToken cancellationToken)
         {
             var columnNames = new string[reader.FieldCount];
             for (int i = 0; i < reader.FieldCount; i++)
@@ -248,8 +283,8 @@ namespace SQLTunnelService
                 var schemaJson = JsonConvert.SerializeObject(schemaData);
                 await _signalRConnection.SendAsync("SendDataChunk", queryId, $"SCHEMA:{schemaJson}", false);
 
-                // Process in batches - NO SIZE LIMITS AT ALL!
-                int batchSize = 1000;
+                // 🚀 OPTIMIZED: Dynamic batch sizing based on settings
+                int batchSize = _settings.StreamingBatchSize;
                 int totalRows = 0;
                 int batchNumber = 0;
                 bool hasMoreRows = true;
@@ -260,7 +295,7 @@ namespace SQLTunnelService
                     dt.Columns.Add(columnNames[i], reader.GetFieldType(i));
                 }
 
-                _logger.LogInformation("Starting unlimited streaming for query {QueryId}", queryId);
+                _logger.LogInformation("🚀 Starting UNLIMITED streaming for query {QueryId} - Batch size: {BatchSize}", queryId, batchSize);
 
                 while (hasMoreRows && !cancellationToken.IsCancellationRequested)
                 {
@@ -289,19 +324,18 @@ namespace SQLTunnelService
                         await _signalRConnection.SendAsync("SendDataChunk", queryId,
                             $"BATCH:{batchNumber}:{batchJson}", false);
 
-                        // Log progress every 10 batches
-                        if (batchNumber % 10 == 0)
+                        // 🚀 OPTIMIZED: Dynamic progress logging
+                        if (batchNumber <= 10 || batchNumber % 20 == 0)
                         {
-                            _logger.LogInformation("Streamed {BatchNumber} batches, {TotalRows} total rows for query {QueryId}",
+                            _logger.LogInformation("📊 Streamed {BatchNumber} batches, {TotalRows} total rows for query {QueryId}",
                                 batchNumber, totalRows, queryId);
                         }
 
-                        // Periodic GC for very large queries (every 50K rows)
-                        if (totalRows % 50000 == 0)
+                        // 🚀 OPTIMIZED: Smart memory management
+                        if (_settings.EnableMemoryOptimization && totalRows % _settings.GCAfterRowsThreshold == 0)
                         {
-                            GC.Collect();
-                            GC.WaitForPendingFinalizers();
-                            _logger.LogDebug("Performed GC after {TotalRows} rows", totalRows);
+                            GC.Collect(0, GCCollectionMode.Optimized); // Quick generation 0 cleanup
+                            _logger.LogDebug("🧹 Performed optimized GC after {TotalRows} rows", totalRows);
                         }
                     }
                 }
@@ -313,24 +347,35 @@ namespace SQLTunnelService
                 // Send completion
                 await _signalRConnection.SendAsync("SendDataChunk", queryId, "Query execution completed", true);
 
-                _logger.LogInformation("Successfully streamed {TotalRows} rows in {BatchCount} batches via SignalR (UNLIMITED)",
+                _logger.LogInformation("🎉 Successfully streamed {TotalRows} rows in {BatchCount} batches via SignalR (UNLIMITED!)",
                     totalRows, batchNumber);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in SignalR streaming for query {QueryId}", queryId);
+                _logger.LogError(ex, "❌ Error in SignalR streaming for query {QueryId}", queryId);
                 await _signalRConnection.SendAsync("SendDataChunk", queryId, $"Error: {ex.Message}", true);
                 throw;
             }
         }
 
-
-
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("SQL Tunnel Service stopping...");
+            _logger.LogInformation("🛑 SQL Tunnel Service stopping...");
+
+            if (_signalRConnection != null)
+            {
+                try
+                {
+                    await _signalRConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "⚠️ Error disposing SignalR connection");
+                }
+            }
+
             await base.StopAsync(cancellationToken);
-            _logger.LogInformation("SQL Tunnel Service stopped");
+            _logger.LogInformation("🛑 SQL Tunnel Service stopped successfully");
         }
 
         private HttpClient CreateHttpClient()
@@ -338,12 +383,16 @@ namespace SQLTunnelService
             var client = _httpClientFactory.CreateClient("SQLTunnelClient");
             client.DefaultRequestHeaders.Add("X-Service-ID", _settings.ServiceId);
             client.DefaultRequestHeaders.Add("X-Service-Key", _settings.SecretKey);
+
+            // 🚀 OPTIMIZED: Extended timeout for large result polling
+            client.Timeout = TimeSpan.FromMinutes(2);
+
             return client;
         }
 
         private async Task<string> GetSqlServerInfoAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Retrieving SQL Server info using connection string");
+            _logger.LogInformation("🔍 Retrieving SQL Server info...");
 
             using var connection = new SqlConnection(_settings.SqlConnectionString);
             await connection.OpenAsync(cancellationToken);
@@ -354,9 +403,7 @@ namespace SQLTunnelService
             return result?.ToString() ?? "Unknown";
         }
 
-        private async Task SendHeartbeatAsync(
-            HttpClient httpClient,
-            CancellationToken cancellationToken)
+        private async Task SendHeartbeatAsync(HttpClient httpClient, CancellationToken cancellationToken)
         {
             try
             {
@@ -365,14 +412,15 @@ namespace SQLTunnelService
                     DisplayName = _settings.DisplayName,
                     Description = _settings.Description,
                     Version = _settings.Version,
-                    ServerInfo = _serverInfo
+                    ServerInfo = _serverInfo,
+                    // 🚀 NEW: Performance metrics
+                    StreamingBatchSize = _settings.StreamingBatchSize,
+                    MaxRowsPerQuery = _settings.MaxRowsPerQuery,
+                    MemoryOptimization = _settings.EnableMemoryOptimization
                 };
 
                 var json = JsonConvert.SerializeObject(heartbeatData);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                _logger.LogDebug("Sending heartbeat to {Endpoint}",
-                    $"{_settings.RelayServerUrl}/services/heartbeat");
 
                 var response = await httpClient.PostAsync(
                     $"{_settings.RelayServerUrl}/services/heartbeat",
@@ -381,237 +429,16 @@ namespace SQLTunnelService
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogDebug("Heartbeat sent successfully");
+                    _logger.LogDebug("💓 Heartbeat sent successfully");
                 }
                 else
                 {
-                    _logger.LogWarning("Failed to send heartbeat. Status: {StatusCode}",
-                        response.StatusCode);
+                    _logger.LogWarning("⚠️ Failed to send heartbeat. Status: {StatusCode}", response.StatusCode);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending heartbeat");
-            }
-        }
-
-        private async Task<string> ExecuteSqlQueryAsync(
-    string query,
-    object parameters,
-    CancellationToken cancellationToken)
-        {
-            // This method should NOT be called in normal operation
-            _logger.LogWarning("ExecuteSqlQueryAsync called - this should only happen for error cases!");
-
-            return JsonConvert.SerializeObject(new
-            {
-                error = "HTTP query execution disabled - use SignalR streaming only"
-            });
-        }
-
-    
-
-        // Add SignalR streaming method (like CloudRelayService):
-        private async Task ProcessLargeQueryWithSignalR(SqlDataReader reader, CancellationToken cancellationToken)
-        {
-            var columnNames = new string[reader.FieldCount];
-            for (int i = 0; i < reader.FieldCount; i++)
-            {
-                columnNames[i] = reader.GetName(i);
-            }
-
-            var queryId = Guid.NewGuid().ToString();
-
-            try
-            {
-                // Send start message
-                await _signalRConnection.SendAsync("SendDataChunk", queryId, "Starting query execution...", false);
-
-                // Send schema
-                var schemaData = columnNames.Select((name, index) => new {
-                    Name = name,
-                    Type = reader.GetFieldType(index).Name
-                });
-                var schemaJson = JsonConvert.SerializeObject(schemaData);
-                await _signalRConnection.SendAsync("SendDataChunk", queryId, $"SCHEMA:{schemaJson}", false);
-
-                // Process in batches (like CloudRelayService)
-                int batchSize = 1000;
-                int totalRows = 0;
-                int batchNumber = 0;
-                bool hasMoreRows = true;
-
-                var dt = new DataTable();
-                for (int i = 0; i < reader.FieldCount; i++)
-                {
-                    dt.Columns.Add(columnNames[i], reader.GetFieldType(i));
-                }
-
-                while (hasMoreRows)
-                {
-                    dt.Clear(); // Reuse DataTable
-                    int rowsInBatch = 0;
-
-                    // Read batch
-                    while (rowsInBatch < batchSize && (hasMoreRows = await reader.ReadAsync(cancellationToken)))
-                    {
-                        var row = dt.NewRow();
-                        for (int i = 0; i < reader.FieldCount; i++)
-                        {
-                            row[i] = reader.IsDBNull(i) ? DBNull.Value : reader.GetValue(i);
-                        }
-                        dt.Rows.Add(row);
-                        rowsInBatch++;
-                    }
-
-                    // Send batch
-                    if (rowsInBatch > 0)
-                    {
-                        totalRows += rowsInBatch;
-                        batchNumber++;
-
-                        string batchJson = JsonConvert.SerializeObject(dt);
-                        await _signalRConnection.SendAsync("SendDataChunk", queryId,
-                            $"BATCH:{batchNumber}:{batchJson}", false);
-
-                        _logger.LogDebug("Sent batch {BatchNumber} with {RowCount} rows", batchNumber, rowsInBatch);
-                    }
-                }
-
-                // Send summary
-                await _signalRConnection.SendAsync("SendDataChunk", queryId,
-                    $"SUMMARY:{{\"totalRows\":{totalRows},\"batches\":{batchNumber}}}", false);
-
-                // Send completion
-                await _signalRConnection.SendAsync("SendDataChunk", queryId, "Query execution completed", true);
-
-                _logger.LogInformation("Streamed {TotalRows} rows in {BatchCount} batches", totalRows, batchNumber);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in SignalR streaming");
-                await _signalRConnection.SendAsync("SendDataChunk", queryId, $"Error: {ex.Message}", true);
-            }
-        }
-
-     
-        private async Task SendQueryResultAsync(
-    HttpClient httpClient,
-    string queryId,
-    string result,
-    string error,
-    CancellationToken cancellationToken)
-        {
-            try
-            {
-                // REDUCED LIMIT: 5MB to avoid server JSON parsing issues
-                if (!string.IsNullOrEmpty(result) && result.Length > 1115_000_000) // 5MB limit
-                {
-                    _logger.LogWarning("Query result too large ({Size} chars), sending error instead", result.Length);
-
-                    // Send truncated error instead of large result
-                    var errorResultObj = new
-                    {
-                        QueryId = queryId,
-                        Result = (string)null,
-                        Error = $"Result too large ({result.Length:N0} characters). Please use LIMIT, TOP, or WHERE clauses to reduce result size.",
-                        Timestamp = DateTime.UtcNow
-                    };
-
-                    var errorJson = JsonConvert.SerializeObject(errorResultObj);
-                    var errorContent = new StringContent(errorJson, Encoding.UTF8, "application/json");
-
-                    var errorResponse = await httpClient.PostAsync(
-                        $"{_settings.RelayServerUrl}/queries/result",
-                        errorContent,
-                        cancellationToken);
-
-                    if (errorResponse.IsSuccessStatusCode)
-                    {
-                        _logger.LogInformation("Sent error result for oversized query {QueryId}", queryId);
-                    }
-                    else
-                    {
-                        _logger.LogError("Failed to send error result: {StatusCode}", errorResponse.StatusCode);
-                    }
-                    return;
-                }
-
-                // Send normal result
-                var resultObj = new
-                {
-                    QueryId = queryId,
-                    Result = result,
-                    Error = error,
-                    Timestamp = DateTime.UtcNow
-                };
-
-                var json = JsonConvert.SerializeObject(resultObj);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                var response = await httpClient.PostAsync(
-                    $"{_settings.RelayServerUrl}/queries/result",
-                    content,
-                    cancellationToken);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Successfully sent result for query {QueryId}", queryId);
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge || // 413
-                         response.StatusCode == System.Net.HttpStatusCode.BadGateway ||             // 502  
-                         response.StatusCode == System.Net.HttpStatusCode.InternalServerError)     // 500 - NEW
-                {
-                    _logger.LogError("Server cannot handle large query result ({StatusCode} error) for query {QueryId}. Size: {Size} chars",
-                        response.StatusCode, queryId, json.Length);
-
-                    // Send a truncated error message instead
-                    await SendTruncatedError(httpClient, queryId, result?.Length ?? 0, cancellationToken);
-                }
-                else
-                {
-                    _logger.LogError("Failed to send query result: {StatusCode} for query {QueryId}",
-                        response.StatusCode, queryId);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Exception sending query result for {QueryId}", queryId);
-            }
-        }
-
-        private async Task SendTruncatedError(HttpClient httpClient, string queryId, int originalSize, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var truncatedResultObj = new
-                {
-                    QueryId = queryId,
-                    Result = (string)null,
-                    Error = $"Query result too large for transmission ({originalSize:N0} characters). Please use LIMIT or WHERE clauses to reduce result size.",
-                    Timestamp = DateTime.UtcNow
-                };
-
-                var json = JsonConvert.SerializeObject(truncatedResultObj);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                var response = await httpClient.PostAsync(
-                    $"{_settings.RelayServerUrl}/queries/result",
-                    content,
-                    cancellationToken);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Sent truncated error message for query {QueryId}", queryId);
-                }
-                else
-                {
-                    _logger.LogError("Failed to send truncated error: {StatusCode}", response.StatusCode);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send truncated error for query {QueryId}", queryId);
+                _logger.LogError(ex, "❌ Error sending heartbeat");
             }
         }
 

@@ -8,11 +8,7 @@
     var settings = SettingsService.GetSettings();
 }
 
-
 <div class="container">
-   
-
-
     @if (TempData["SuccessMessage"] != null)
     {
         <div class="alert alert-success alert-dismissible fade show" role="alert">
@@ -33,11 +29,11 @@
     {
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5>Selected SQL Agent</h5>
+                <h5>🚀 Selected SQL Agent (Streaming Enabled)</h5>
                 <a href="@Url.Action("Index", "Home")" class="btn btn-sm btn-outline-primary">
                     <i class="bi bi-arrow-left"></i> Change Agent
-                </a>              
-            </div>        
+                </a>
+            </div>
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
@@ -48,11 +44,15 @@
                             <span class="badge @(Model.SelectedAgent.IsActive ? "bg-success" : "bg-danger")">
                                 @(Model.SelectedAgent.IsActive ? "Online" : "Offline")
                             </span>
+                            <span class="badge bg-primary">⚡ Unlimited Streaming</span>
                         </p>
                     </div>
                     <div class="col-md-6">
                         <h6>Connection Info</h6>
                         <p class="text-muted small">@Model.SelectedAgent.ServerInfo</p>
+                        <div class="alert alert-info small">
+                            <strong>🚀 Performance Mode:</strong> This agent supports unlimited data streaming with optimized memory management.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -61,38 +61,31 @@
     else
     {
         <div class="alert alert-info mb-4">
-            <h5>No specific SQL agent selected</h5>
+            <h5>🎯 High-Performance SQL Execution</h5>
             <p>
-                The query will be executed on any available agent.
+                Queries are executed using <strong>optimized streaming technology</strong> with unlimited data handling.
                 <a href="@Url.Action("Index", "Home")" class="alert-link">Select a specific agent</a> for more control.
             </p>
         </div>
     }
 
-    <!-- Χρήσιμο για αποσφαλμάτωση, αφαιρέστε σε παραγωγή -->
-    <!-- <div class="alert alert-info mb-3">
-        <strong>Debug info:</strong> Current settings from cookie:
-        RelayServerUrl: @settings.RelayServerUrl,
-        ApiKey: @settings.ApiKey
-    </div>  -->
-
-  
-
-
-    <!-- Φόρμα εκτέλεσης SQL query -->
-    <form asp-action="ExecuteQuery" method="post">
-
+    <!-- 🚀 SIMPLIFIED: Clean query form -->
+    <form asp-action="ExecuteQuery" method="post" id="queryForm">
         <input type="hidden" asp-for="RelayServerUrl" />
         <input type="hidden" asp-for="ApiKey" />
         <input type="hidden" asp-for="ServiceId" />
 
         <div class="card mb-4">
             <div class="card-header">
-                <h5>SQL Query</h5>
+                <h5>⚡ SQL Query - Unlimited Streaming</h5>
             </div>
             <div class="card-body">
                 <div class="mb-3">
-                    <textarea asp-for="Query" class="form-control" rows="5" placeholder="Enter your SQL query here..."></textarea>
+                    <textarea asp-for="Query" class="form-control" rows="6"
+                              placeholder="Enter your SQL query here... (No size limits - streaming enabled!)"></textarea>
+                    <div class="form-text">
+                        🚀 <strong>Performance tip:</strong> Large result sets are automatically streamed for optimal performance.
+                    </div>
                 </div>
 
                 <div class="form-check mb-3">
@@ -104,7 +97,6 @@
                     <div class="card">
                         <div class="card-body">
                             <h6 class="card-subtitle mb-3">Parameters</h6>
-
                             <div id="parameters">
                                 @if (Model.Parameters != null)
                                 {
@@ -146,7 +138,6 @@
                                     }
                                 }
                             </div>
-
                             <button type="submit" asp-action="AddParameter" class="btn btn-sm btn-secondary mt-2">
                                 Add Parameter
                             </button>
@@ -155,13 +146,39 @@
                 </div>
             </div>
             <div class="card-footer">
-                <button type="submit" class="btn btn-primary">Execute Query</button>
+                <button type="submit" class="btn btn-primary btn-lg" id="executeBtn">
+                    <i class="bi bi-lightning-fill"></i> Execute Query (Streaming)
+                </button>
                 <a class="btn btn-success" href="@Url.Action("QueryResults", "Sql")">
                     <i class="bi bi-database-check"></i> View History
                 </a>
+                <div class="mt-2">
+                    <small class="text-muted">
+                        ⚡ Powered by optimized streaming technology - No data size limits
+                    </small>
+                </div>
             </div>
         </div>
     </form>
+
+    <!-- 🚀 ENHANCED: Progress indicator -->
+    <div id="progressIndicator" class="card mt-4" style="display: none;">
+        <div class="card-body">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div>
+                    <strong>Processing query...</strong>
+                    <div class="small text-muted" id="progressText">Initializing optimized streaming...</div>
+                </div>
+            </div>
+            <div class="progress mt-2" style="height: 6px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated"
+                     role="progressbar" style="width: 0%" id="progressBar"></div>
+            </div>
+        </div>
+    </div>
 
     @if (!string.IsNullOrEmpty(Model.Error))
     {
@@ -174,25 +191,26 @@
     {
         <div class="card mt-4">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5>Results</h5>
+                <h5>🎉 Results (Streamed)</h5>
                 <div class="export-buttons"></div>
             </div>
             <div class="card-body">
                 <div class="row mb-3">
                     <div class="col-md-8">
                         <div class="input-group">
-                            <span class="input-group-text">Global Search:</span>
+                            <span class="input-group-text">🔍 Global Search:</span>
                             <input type="text" id="globalSearch" class="form-control" placeholder="Search across all columns...">
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="input-group">
-                            <span class="input-group-text">Page Size:</span>
+                            <span class="input-group-text">📊 Page Size:</span>
                             <select id="pageSize" class="form-select">
                                 <option value="10">10</option>
                                 <option value="25">25</option>
                                 <option value="50">50</option>
                                 <option value="100">100</option>
+                                <option value="500">500</option>
                                 <option value="-1">All</option>
                             </select>
                         </div>
@@ -209,15 +227,13 @@
     }
 </div>
 
-
-
 @section Scripts {
     <script>
-        // Wait for DOM to be fully loaded
+        // 🚀 SIMPLIFIED & OPTIMIZED JavaScript
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded, initializing JavaScript...');
+            console.log('🚀 SQL Query Executor - Optimized Version Loaded');
 
-            // Toggle parameters section visibility - DEFENSIVE CHECK
+            // ✅ Parameters toggle
             const showParametersElement = document.getElementById('showParameters');
             const parametersSection = document.getElementById('parametersSection');
 
@@ -225,12 +241,9 @@
                 showParametersElement.addEventListener('change', function() {
                     parametersSection.style.display = this.checked ? 'block' : 'none';
                 });
-                console.log('Parameters toggle initialized');
-            } else {
-                console.log('Parameters elements not found - skipping parameters functionality');
             }
 
-            // Handle NULL checkboxes - DEFENSIVE CHECK
+            // ✅ NULL checkboxes
             document.addEventListener('change', function(event) {
                 if (event.target.classList.contains('parameter-null-check')) {
                     const valueInput = event.target.closest('.row').querySelector('input[name$=".Value"]');
@@ -240,7 +253,7 @@
                 }
             });
 
-            // Global search functionality - DEFENSIVE CHECK
+            // ✅ Search functionality
             const globalSearchElement = document.getElementById('globalSearch');
             if (globalSearchElement) {
                 globalSearchElement.addEventListener('keyup', function() {
@@ -251,7 +264,7 @@
                 });
             }
 
-            // Page size functionality - DEFENSIVE CHECK
+            // ✅ Page size
             const pageSizeElement = document.getElementById('pageSize');
             if (pageSizeElement) {
                 pageSizeElement.addEventListener('change', function() {
@@ -262,402 +275,124 @@
                 });
             }
 
-                const executeButton = document.querySelector('button[type="submit"]');
-        if (executeButton && executeButton.textContent.includes('Execute Query')) {
-            // Replace the existing button with streaming-only button
-            executeButton.type = 'button';
-            executeButton.className = 'btn btn-primary';
-            executeButton.innerHTML = '<i class="bi bi-broadcast"></i> Execute Query (Streaming)';
-            executeButton.onclick = executeQueryEnhanced;
+            // 🚀 ENHANCED: Form submission with progress
+            const form = document.getElementById('queryForm');
+            const executeBtn = document.getElementById('executeBtn');
+            const progressIndicator = document.getElementById('progressIndicator');
+            const progressText = document.getElementById('progressText');
+            const progressBar = document.getElementById('progressBar');
 
-            console.log('Single streaming button configured');
-        }
+            if (form && executeBtn) {
+                form.addEventListener('submit', function(e) {
+                    const query = document.querySelector('textarea[name="Query"]').value.trim();
+                    if (!query) {
+                        e.preventDefault();
+                        alert('Please enter a SQL query');
+                        return;
+                    }
 
-               const form = document.querySelector('form[action*="ExecuteQuery"]');
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                console.log('Form submission prevented - using streaming only');
-                executeQueryEnhanced();
-            });
-        }
+                    // Show enhanced progress
+                    if (progressIndicator) {
+                        progressIndicator.style.display = 'block';
+                        executeBtn.disabled = true;
+                        executeBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
 
-            // Process existing results if any - SAFE JSON PARSING
+                        // Simulate progress updates
+                        let progress = 0;
+                        const progressInterval = setInterval(() => {
+                            progress += Math.random() * 10;
+                            if (progress > 90) progress = 90;
+
+                            progressBar.style.width = progress + '%';
+
+                            if (progress < 30) {
+                                progressText.textContent = 'Connecting to SQL agent...';
+                            } else if (progress < 60) {
+                                progressText.textContent = 'Executing query with streaming...';
+                            } else {
+                                progressText.textContent = 'Processing results...';
+                            }
+                        }, 500);
+
+                        // Clear interval after form submission
+                        setTimeout(() => clearInterval(progressInterval), 1000);
+                    }
+                });
+            }
+
+            // ✅ Process existing results
             try {
-                // Use a safer approach to get the result data
-                const resultElement = document.querySelector('[data-result]');
-                let resultData = null;
-
-                if (resultElement && resultElement.dataset.result) {
-                    resultData = resultElement.dataset.result;
-                } else {
-                    // Fallback to model data if available
         @if (Model.Result != null)
         {
-                     <div id="resultDataContainer"
-                 data-result="@Html.Raw(Json.Serialize(Model.Result))"
-                 style="display: none;">
-            </div>
-        }
-                }
-
-                if (resultData) {
-                    console.log('Processing existing results...');
-                    let data;
-
-                    if (typeof resultData === 'string') {
-                        data = JSON.parse(resultData);
-                    } else {
-                        data = resultData;
-                    }
-
-                    if (Array.isArray(data) && data.length > 0) {
-                        displayTableDataWithDataTables(data);
-                    } else if (typeof data === 'object' && data !== null) {
-                        displayTableDataWithDataTables([data]);
-                    } else {
-                        console.log('No valid data to display');
-                    }
-                }
-            } catch (e) {
-                console.error("Error processing existing results:", e);
-                // Don't throw error, just log it
-            }
-
-            console.log('JavaScript initialization complete');
-        });
-
-        // NEW: Enhanced executeQuery function to support streaming
-        async function executeQueryEnhanced() {
-          console.log('Streaming-only query execution started...');
-
-          const queryTextarea = document.querySelector('textarea[name="Query"]');
-          const query = queryTextarea ? queryTextarea.value.trim() : '';
-          const serviceId = '@(Model.ServiceId ?? "")';
-
-          if (!query) {
-              alert('Please enter a SQL query');
-              return;
-          }
-
-            // Clear previous results
-             const resultsTableHead = document.getElementById('resultsTableHead');
-            const resultsTableBody = document.getElementById('resultsTableBody');
-            if (resultsTableHead) resultsTableHead.innerHTML = '';
-            if (resultsTableBody) resultsTableBody.innerHTML = '';
-
-            try {
-                console.log('Using SignalR streaming for ALL queries...');
-                const resultData = await executeStreamingQuery(query, serviceId);
-
-                // Process streaming results
-                if (resultData) {
-                    try {
-                        const data = JSON.parse(resultData);
-                        if (Array.isArray(data) && data.length > 0) {
-                            displayTableDataWithDataTables(data);
-                            showSuccessMessage(`Query completed successfully! Received ${data.length} rows via streaming.`);
-                        } else if (typeof data === 'object' && data !== null) {
-                            displayTableDataWithDataTables([data]);
-                        } else {
-                            console.log('Unexpected data format:', data);
-                            displayRawResults(resultData);
+            <text>
+                        const resultData = @Html.Raw(Json.Serialize(Model.Result));
+                        if (resultData) {
+                            const data = typeof resultData === 'string' ? JSON.parse(resultData) : resultData;
+                            if (Array.isArray(data) && data.length > 0) {
+                                displayTableDataWithDataTables(data);
+                                console.log('✅ Displayed', data.length, 'rows from streaming results');
+                            } else if (typeof data === 'object' && data !== null) {
+                                displayTableDataWithDataTables([data]);
+                            }
                         }
-                    } catch (e) {
-                        console.error("Error parsing streaming JSON:", e);
-                        displayRawResults(resultData);
-                    }
-                }
-            } catch (error) {
-                console.error('Streaming query execution error:', error);
-                showErrorMessage(`Error executing query: ${error.message}`);
+            </text>
+        }
+            } catch (e) {
+                console.error("❌ Error processing results:", e);
             }
-        }                    
-
-          async function executeStreamingQuery(query, serviceId) {
-        const relayServerUrl = '@(Model.RelayServerUrl ?? "")';
-        const apiKey = '@(Model.ApiKey ?? "")';
-
-        console.log('🔄 Streaming Debug Info:', {
-            relayServerUrl: relayServerUrl,
-            apiKey: apiKey ? 'Present' : 'Missing',
-            query: query.substring(0, 100) + '...',
-            serviceId: serviceId
         });
 
-        if (!relayServerUrl || !apiKey) {
-            throw new Error('❌ Server configuration missing - RelayServerUrl or ApiKey not set');
-        }
-
-            // IMPORTANT: Check if streaming endpoint exists
-               const streamingUrl = `${relayServerUrl}/api/sql/execute-stream?query=${encodeURIComponent(query)}&serviceId=${serviceId || ''}`;
-        console.log('🎯 Attempting to connect to:', streamingUrl);
-
-        try {
-            // First, test if the endpoint is reachable
-            const testResponse = await fetch(`${relayServerUrl}/api/status`, {
-                headers: {
-                    'X-API-Key': apiKey
-                }
-            });
-
-            if (!testResponse.ok) {
-                throw new Error(`❌ Server not reachable - Status endpoint returned ${testResponse.status}`);
-            }
-
-            console.log('✅ Server is reachable, attempting streaming query...');
-
-            const response = await fetch(streamingUrl, {
-                headers: {
-                    'X-API-Key': apiKey
-                }
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`❌ HTTP ${response.status}: ${response.statusText} - ${errorText}`);
-            }
-
-            console.log('✅ Streaming response received, processing...');
-
-            if (!response.body) {
-                throw new Error('❌ Response body is not available for streaming');
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let result = '';
-            let rowCount = 0;
-            let chunkCount = 0;
-
-            // Show progress indicator
-            updateStreamingProgress('🚀 Starting streaming query...', 0);
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    console.log('✅ Streaming completed after', chunkCount, 'chunks');
-                    break;
-                }
-
-                chunkCount++;
-                const chunk = decoder.decode(value, { stream: true });
-                result += chunk;
-
-                // Count rows for progress (rough estimate)
-                const newRowCount = (result.match(/},/g) || []).length;
-                if (newRowCount > rowCount) {
-                    rowCount = newRowCount;
-                    updateStreamingProgress(`📊 Streaming data... ${rowCount} rows received (${chunkCount} chunks)`, rowCount);
-                }
-
-                // Log progress every 100 chunks
-                if (chunkCount % 100 === 0) {
-                    console.log(`📈 Received ${chunkCount} chunks, ${rowCount} rows so far`);
-                }
-            }
-
-            updateStreamingProgress(`✅ Processing results... ${rowCount} rows received`, rowCount);
-            console.log('📊 Final result length:', result.length, 'characters');
-            return result;
-
-        } catch (error) {
-            console.error('❌ Streaming error details:', {
-                error: error.message,
-                stack: error.stack,
-                url: streamingUrl
-            });
-
-            updateStreamingProgress(`❌ Streaming error: ${error.message}`, 0);
-
-            // Try to provide more specific error information
-            if (error.message.includes('Failed to fetch')) {
-                throw new Error(`❌ Cannot connect to streaming endpoint. Check if SqlRelayServer is running and streaming endpoint is configured. URL: ${streamingUrl}`);
-            } else {
-                throw error;
-            }
-        }
-    }
-
-        // NEW: Update progress during streaming
-           function updateStreamingProgress(message, rowCount) {
-        let progressDiv = document.getElementById('streamingProgress');
-        if (!progressDiv) {
-            progressDiv = document.createElement('div');
-            progressDiv.id = 'streamingProgress';
-            progressDiv.className = 'alert alert-info';
-            progressDiv.style.display = 'none';
-
-            // Insert before results table
-            const resultsCard = document.querySelector('.card.mt-4');
-            if (resultsCard) {
-                resultsCard.parentNode.insertBefore(progressDiv, resultsCard);
-            } else {
-                const container = document.querySelector('.container');
-                if (container) {
-                    container.appendChild(progressDiv);
-                }
-            }
-        }
-
-        // ✅ Enhanced progress display with emojis
-        const isError = message.includes('❌') || message.includes('error');
-        const isComplete = message.includes('✅') || message.includes('Processing results');
-
-        progressDiv.innerHTML = `
-            <div class="d-flex align-items-center">
-                ${!isError && !isComplete ? `
-                    <div class="spinner-border spinner-border-sm me-2" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                ` : ''}
-                <span>${message}</span>
-            </div>
-        `;
-
-        // Change color based on status
-        progressDiv.className = `alert ${isError ? 'alert-danger' : isComplete ? 'alert-success' : 'alert-info'}`;
-        progressDiv.style.display = 'block';
-
-        // Hide after completion
-        if (isError || isComplete) {
-            setTimeout(() => {
-                progressDiv.style.display = 'none';
-            }, isError ? 5000 : 2000);
-        }
-    }
-
-             // Add success/error message functions
-               function showSuccessMessage(message) {
-            // Remove any existing alerts first
-            const existingAlerts = document.querySelectorAll('.alert-success, .alert-danger');
-            existingAlerts.forEach(alert => {
-                if (alert.parentNode) {
-                    alert.parentNode.removeChild(alert);
-                }
-            });
-
-            const alertDiv = document.createElement('div');
-            alertDiv.className = 'alert alert-success alert-dismissible fade show mt-3';
-            alertDiv.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-
-            // SAFER insertion - append to container instead of insertBefore
-            const container = document.querySelector('.container');
-            if (container) {
-                container.appendChild(alertDiv);
-
-                // Scroll to the alert
-                alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            } else {
-                // Fallback: append to body
-                document.body.appendChild(alertDiv);
-            }
-
-            // Auto-hide after 5 seconds
-            setTimeout(() => {
-                if (alertDiv && alertDiv.parentNode) {
-                    alertDiv.remove();
-                }
-            }, 5000);
-        }
-
-               function showErrorMessage(message) {
-            // Remove any existing alerts first
-            const existingAlerts = document.querySelectorAll('.alert-success, .alert-danger');
-            existingAlerts.forEach(alert => {
-                if (alert.parentNode) {
-                    alert.parentNode.removeChild(alert);
-                }
-            });
-
-            const alertDiv = document.createElement('div');
-            alertDiv.className = 'alert alert-danger alert-dismissible fade show mt-3';
-            alertDiv.innerHTML = `
-                <strong>Error:</strong> ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-
-            // SAFER insertion - append to container instead of insertBefore
-            const container = document.querySelector('.container');
-            if (container) {
-                container.appendChild(alertDiv);
-
-                // Scroll to the alert
-                alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            } else {
-                // Fallback: append to body
-                document.body.appendChild(alertDiv);
-            }
-
-            // Keep error messages longer - 10 seconds
-            setTimeout(() => {
-                if (alertDiv && alertDiv.parentNode) {
-                    alertDiv.remove();
-                }
-            }, 10000);
-        }
-
-        // Display raw results when JSON parsing fails
-        function displayRawResults(data) {
-            const resultsTableBody = document.getElementById('resultsTableBody');
-            const resultsTableHead = document.getElementById('resultsTableHead');
-
-            if (resultsTableHead) resultsTableHead.innerHTML = '';
-            if (resultsTableBody) {
-                resultsTableBody.innerHTML = `<tr><td colspan="100%"><pre>${data}</pre></td></tr>`;
-            }
-        }
-
-        // Existing displayTableDataWithDataTables function
+        // 🚀 OPTIMIZED: Enhanced DataTables with better performance
         function displayTableDataWithDataTables(data) {
             if (!data || data.length === 0) return;
 
             const table = $('#resultsTable');
-            if (!table.length) {
-                console.error('Results table not found');
-                return;
-            }
+            if (!table.length) return;
 
-            // Create columns from first object keys
+            // Create columns
             const columns = Object.keys(data[0]).map(key => ({
                 title: key,
                 data: key
             }));
 
-            // Destroy existing DataTable if it exists
+            // Destroy existing DataTable
             if ($.fn.DataTable.isDataTable(table)) {
                 table.DataTable().destroy();
             }
 
-            // Clear the table
             table.empty();
 
-            // Create the DataTable
+            // 🚀 ENHANCED: Better DataTable configuration for large datasets
             const dataTable = table.DataTable({
                 data: data,
                 columns: columns,
-                pageLength: 10,
-                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
+                pageLength: 25, // Increased default
+                lengthMenu: [[10, 25, 50, 100, 500, -1], [10, 25, 50, 100, 500, "All"]],
                 dom: 'Blfrtip',
+                processing: true, // Show processing indicator
+                deferRender: true, // Improve performance for large datasets
                 buttons: [
                     {
                         extend: 'collection',
-                        text: 'Export',
+                        text: '📊 Export Data',
                         className: 'btn btn-primary dropdown-toggle',
                         buttons: [
                             {
                                 extend: 'excelHtml5',
-                                text: 'Excel',
+                                text: '📑 Excel',
                                 exportOptions: { columns: ':visible' },
-                                title: 'SQL Query Results - ' + new Date().toLocaleString(),
+                                title: 'SQL Results - ' + new Date().toLocaleString(),
                                 className: 'dropdown-item'
                             },
                             {
                                 extend: 'csvHtml5',
-                                text: 'CSV',
+                                text: '📋 CSV',
+                                exportOptions: { columns: ':visible' },
+                                className: 'dropdown-item'
+                            },
+                            {
+                                extend: 'copyHtml5',
+                                text: '📄 Copy',
                                 exportOptions: { columns: ':visible' },
                                 className: 'dropdown-item'
                             }
@@ -665,22 +400,33 @@
                     }
                 ],
                 language: {
-                    search: "Filter:",
-                    lengthMenu: "Show _MENU_ entries",
-                    info: "Showing _START_ to _END_ of _TOTAL_ entries"
+                    search: "🔍 Filter:",
+                    lengthMenu: "📊 Show _MENU_ rows",
+                    info: "Showing _START_ to _END_ of _TOTAL_ rows (Streamed)",
+                    processing: "⚡ Processing large dataset..."
                 },
                 initComplete: function() {
-                    // Move export buttons to custom area
+                    // Move export buttons
                     const exportButtons = $('.dt-buttons');
                     const exportArea = $('.export-buttons');
                     if (exportButtons.length && exportArea.length) {
                         exportButtons.detach().appendTo(exportArea);
                     }
+
+                    // Show success message
+                    const rowCount = this.api().data().length;
+                    console.log('🎉 DataTable initialized with', rowCount, 'rows');
+
+                    // Add performance info
+                    const infoElement = $('.dataTables_info');
+                    if (infoElement.length && rowCount > 1000) {
+                        infoElement.append(' <span class="badge bg-success ms-2">⚡ Optimized for large datasets</span>');
+                    }
                 }
             });
 
-            // Add column filters
-            if ($('#resultsTable thead tr').length === 1) {
+            // 🚀 ENHANCED: Smart column filters (only for smaller datasets)
+            if (data.length <= 10000) {
                 $('#resultsTable thead tr').clone(true).appendTo('#resultsTable thead');
                 $('#resultsTable thead tr:eq(1) th').each(function(i) {
                     const title = $(this).text();

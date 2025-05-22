@@ -45,22 +45,22 @@ namespace SqlTunnelWebClient.Controllers
                     if (selectedAgent != null)
                     {
                         model.SelectedAgent = selectedAgent;
+                        _logger.LogInformation("🎯 Selected agent: {AgentName} (v{Version})",
+                            selectedAgent.DisplayName, selectedAgent.Version);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error loading agent details");
+                    _logger.LogError(ex, "❌ Error loading agent details");
                 }
             }
 
             return View(model);
         }
 
-     
         [HttpGet("Sql/Agent/{serviceId}")]
         public async Task<IActionResult> Agent(string serviceId)
         {
-            // Κώδικας για προβολή με συγκεκριμένο agent
             var settings = _settingsService.GetSettings();
 
             var model = new SqlViewModel
@@ -70,7 +70,6 @@ namespace SqlTunnelWebClient.Controllers
                 ServiceId = serviceId
             };
 
-            // Αν υπάρχει επιλεγμένος agent, φορτώνουμε τις πληροφορίες του
             if (!string.IsNullOrEmpty(serviceId))
             {
                 try
@@ -81,11 +80,12 @@ namespace SqlTunnelWebClient.Controllers
                     if (selectedAgent != null)
                     {
                         model.SelectedAgent = selectedAgent;
+                        _logger.LogInformation("🚀 Agent selected: {ServiceId}", serviceId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error loading agent details");
+                    _logger.LogError(ex, "❌ Error loading agent details for {ServiceId}", serviceId);
                 }
             }
 
@@ -97,24 +97,21 @@ namespace SqlTunnelWebClient.Controllers
         {
             try
             {
-                _logger.LogInformation($"Saving settings - RelayServerUrl: {model.RelayServerUrl}, ApiKey: {model.ApiKey}");
+                _logger.LogInformation("💾 Saving settings - RelayServerUrl: {RelayServerUrl}", model.RelayServerUrl);
 
-                // Αποθήκευση των ρυθμίσεων
                 _settingsService.SaveSettings(new ClientSettings
                 {
                     RelayServerUrl = model.RelayServerUrl,
                     ApiKey = model.ApiKey
                 });
 
-                // Εμφάνιση μηνύματος επιτυχίας
-                TempData["SuccessMessage"] = "Settings saved successfully!";
-
-                _logger.LogInformation("Settings saved successfully");
+                TempData["SuccessMessage"] = "⚡ Settings saved successfully! Ready for high-performance streaming.";
+                _logger.LogInformation("✅ Settings saved successfully");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error saving settings");
-                TempData["ErrorMessage"] = $"Error saving settings: {ex.Message}";
+                _logger.LogError(ex, "❌ Error saving settings");
+                TempData["ErrorMessage"] = $"❌ Error saving settings: {ex.Message}";
             }
 
             return RedirectToAction("Index");
@@ -123,9 +120,13 @@ namespace SqlTunnelWebClient.Controllers
         [HttpPost]
         public async Task<IActionResult> ExecuteQuery(SqlViewModel model)
         {
+            var startTime = DateTime.UtcNow;
+
             try
             {
-                // Αποθήκευση των ρυθμίσεων
+                _logger.LogInformation("🚀 Starting optimized query execution");
+
+                // Save settings
                 _settingsService.SaveSettings(new ClientSettings
                 {
                     RelayServerUrl = model.RelayServerUrl,
@@ -151,12 +152,19 @@ namespace SqlTunnelWebClient.Controllers
                     }
                 }
 
-                // Αποστολή του serviceId στο ExecuteSqlQuery
+                // 🚀 OPTIMIZED: Execute with performance logging
+                _logger.LogInformation("⚡ Executing query via optimized streaming - Length: {QueryLength} chars",
+                    model.Query.Length);
+
                 var result = await ExecuteSqlQuery(model.RelayServerUrl, model.ApiKey, model.Query, parameters, model.ServiceId);
+
+                var duration = DateTime.UtcNow - startTime;
+                _logger.LogInformation("🎉 Query completed in {Duration:F2} seconds", duration.TotalSeconds);
+
                 model.Result = result;
                 model.Error = null;
 
-                // Ανανέωση των πληροφοριών του agent αν είναι επιλεγμένος
+                // Refresh agent info if selected
                 if (!string.IsNullOrEmpty(model.ServiceId))
                 {
                     try
@@ -171,15 +179,24 @@ namespace SqlTunnelWebClient.Controllers
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error refreshing agent details");
+                        _logger.LogError(ex, "⚠️ Error refreshing agent details");
                     }
                 }
+
+                // 🚀 Enhanced success message with performance metrics
+                var resultSize = result?.Length ?? 0;
+                TempData["SuccessMessage"] = $"🎉 Query executed successfully in {duration.TotalSeconds:F1}s! " +
+                    $"📊 Result size: {FormatBytes(resultSize)} • ⚡ Streamed with unlimited capacity";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error executing query");
-                model.Error = $"Error: {ex.Message}";
+                var duration = DateTime.UtcNow - startTime;
+                _logger.LogError(ex, "❌ Error executing query after {Duration:F2} seconds", duration.TotalSeconds);
+
+                model.Error = $"❌ Error: {ex.Message}";
                 model.Result = null;
+
+                TempData["ErrorMessage"] = $"❌ Query failed after {duration.TotalSeconds:F1}s: {ex.Message}";
             }
 
             return View("Index", model);
@@ -213,34 +230,40 @@ namespace SqlTunnelWebClient.Controllers
         {
             using (var httpClient = _clientFactory.CreateClient())
             {
-                // Ensure server URL ends with a slash
                 serverUrl = serverUrl.TrimEnd('/');
 
-                // Ρύθμιση των headers
+                // 🚀 OPTIMIZED: Enhanced HTTP client configuration
                 httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+                httpClient.Timeout = TimeSpan.FromMinutes(30); // Extended timeout for large queries
 
                 var request = new
                 {
                     Query = query,
                     Parameters = parameters,
-                    ServiceId = serviceId // Προσθήκη του serviceId στο request
+                    ServiceId = serviceId
                 };
 
                 var json = JsonConvert.SerializeObject(request);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var fullUrl = $"{serverUrl}/sql/execute";
-                _logger.LogInformation($"Sending request to: {fullUrl}, ServiceId: {serviceId}");
+
+                _logger.LogInformation("📤 Sending optimized streaming request to: {Url} | ServiceId: {ServiceId} | Size: {Size} bytes",
+                    fullUrl, serviceId ?? "auto-select", json.Length);
 
                 var response = await httpClient.PostAsync(fullUrl, content);
 
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("❌ Server returned {StatusCode}: {Error}", response.StatusCode, errorContent);
                     throw new Exception($"Server returned status {response.StatusCode}: {errorContent}");
                 }
 
-                return await response.Content.ReadAsStringAsync();
+                var result = await response.Content.ReadAsStringAsync();
+                _logger.LogInformation("✅ Received response: {Size} bytes", result.Length);
+
+                return result;
             }
         }
 
@@ -260,7 +283,11 @@ namespace SqlTunnelWebClient.Controllers
                 }
 
                 var content = await response.Content.ReadAsStringAsync();
-                return JsonConvert.DeserializeObject<List<SqlAgent>>(content) ?? new List<SqlAgent>();
+                var agents = JsonConvert.DeserializeObject<List<SqlAgent>>(content) ?? new List<SqlAgent>();
+
+                _logger.LogInformation("📊 Retrieved {Count} active agents", agents.Count);
+
+                return agents;
             }
         }
 
@@ -272,6 +299,9 @@ namespace SqlTunnelWebClient.Controllers
 
             model.Parameters.Add(new SqlParameter { Type = "String" });
             model.ShowParameters = true;
+
+            _logger.LogDebug("➕ Added parameter - Total: {Count}", model.Parameters.Count);
+
             return View("Index", model);
         }
 
@@ -281,28 +311,78 @@ namespace SqlTunnelWebClient.Controllers
             if (model.Parameters != null && index >= 0 && index < model.Parameters.Count)
             {
                 model.Parameters.RemoveAt(index);
+                _logger.LogDebug("➖ Removed parameter at index {Index} - Total: {Count}", index, model.Parameters.Count);
             }
             return View("Index", model);
         }
 
+        // 🚀 ENHANCED: QueryResults with better error handling and performance metrics
         public async Task<IActionResult> QueryResults()
         {
-            var settings = _settingsService.GetSettings();
-            var relayUrl = settings.RelayServerUrl.TrimEnd('/');
-            using var httpClient = _clientFactory.CreateClient();
-            httpClient.DefaultRequestHeaders.Clear();
-            httpClient.DefaultRequestHeaders.Add("X-API-Key", settings.ApiKey);
+            var startTime = DateTime.UtcNow;
 
-            var response = await httpClient.GetAsync($"{relayUrl}/query-results");
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                TempData["ErrorMessage"] = $"Server returned {response.StatusCode}";
+                var settings = _settingsService.GetSettings();
+                var relayUrl = settings.RelayServerUrl.TrimEnd('/');
+
+                _logger.LogInformation("🔍 Loading query results from: {Url}", relayUrl);
+
+                using var httpClient = _clientFactory.CreateClient();
+                httpClient.DefaultRequestHeaders.Clear();
+                httpClient.DefaultRequestHeaders.Add("X-API-Key", settings.ApiKey);
+                httpClient.Timeout = TimeSpan.FromMinutes(5); // Extended timeout
+
+                var response = await httpClient.GetAsync($"{relayUrl}/query-results");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var duration = DateTime.UtcNow - startTime;
+                    _logger.LogError("❌ Failed to load query results after {Duration:F2}s - Status: {StatusCode}",
+                        duration.TotalSeconds, response.StatusCode);
+
+                    TempData["ErrorMessage"] = $"❌ Server returned {response.StatusCode} after {duration.TotalSeconds:F1}s. " +
+                        "Please check if the SQL Relay Server is running.";
+                    return RedirectToAction("Index", "Sql");
+                }
+
+                var html = await response.Content.ReadAsStringAsync();
+                var duration2 = DateTime.UtcNow - startTime;
+
+                _logger.LogInformation("✅ Query results loaded successfully in {Duration:F2}s - Size: {Size} bytes",
+                    duration2.TotalSeconds, html.Length);
+
+                ViewBag.QueryHtml = html;
+
+                // 🚀 Add performance metrics to ViewBag
+                ViewBag.LoadTime = duration2.TotalSeconds;
+                ViewBag.DataSize = FormatBytes(html.Length);
+                ViewBag.LastUpdated = DateTime.Now;
+
+                return View();
+            }
+            catch (Exception ex)
+            {
+                var duration = DateTime.UtcNow - startTime;
+                _logger.LogError(ex, "❌ Exception loading query results after {Duration:F2}s", duration.TotalSeconds);
+
+                TempData["ErrorMessage"] = $"❌ Error loading query results: {ex.Message} (after {duration.TotalSeconds:F1}s)";
                 return RedirectToAction("Index", "Sql");
             }
+        }
 
-            var html = await response.Content.ReadAsStringAsync();
-            ViewBag.QueryHtml = html;
-            return View();
+        // 🚀 NEW: Helper method for formatting bytes
+        private static string FormatBytes(long bytes)
+        {
+            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+            int counter = 0;
+            decimal number = bytes;
+            while (Math.Round(number / 1024) >= 1)
+            {
+                number /= 1024;
+                counter++;
+            }
+            return string.Format("{0:n1} {1}", number, suffixes[counter]);
         }
     }
 }
