@@ -128,7 +128,7 @@ namespace SqlRelayServer
             });
 
 
-            app.Map("/query-results", appBuilder =>
+            app.Map("/api/query-results", appBuilder =>
             {
                 appBuilder.Run(async context =>
                 {
@@ -244,7 +244,7 @@ namespace SqlRelayServer
 
                     // Προσθήκη JavaScript για αυτόματη ανανέωση κάθε 5 δευτερόλεπτα
                     await context.Response.WriteAsync("<script>");
-                    await context.Response.WriteAsync("setTimeout(function() { location.reload(); }, 5000);");
+                    await context.Response.WriteAsync("setTimeout(function() { location.reload(); }, 120000);");
                     await context.Response.WriteAsync("</script>");
 
                     await context.Response.WriteAsync("</body></html>");
@@ -329,7 +329,7 @@ namespace SqlRelayServer
 
                         // Περιμένουμε για το αποτέλεσμα (με timeout)
                         var startTime = DateTime.UtcNow;
-                        var timeout = TimeSpan.FromSeconds(30);
+                        var timeout = TimeSpan.FromSeconds(120);
 
                         while (DateTime.UtcNow - startTime < timeout)
                         {

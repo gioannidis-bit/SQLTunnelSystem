@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using SqlTunnelWebClient.Models;
 using SqlTunnelWebClient.Services;
 using System.Text;
@@ -282,6 +283,26 @@ namespace SqlTunnelWebClient.Controllers
                 model.Parameters.RemoveAt(index);
             }
             return View("Index", model);
-        }      
+        }
+
+        public async Task<IActionResult> QueryResults()
+        {
+            var settings = _settingsService.GetSettings();
+            var relayUrl = settings.RelayServerUrl.TrimEnd('/');
+            using var httpClient = _clientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Clear();
+            httpClient.DefaultRequestHeaders.Add("X-API-Key", settings.ApiKey);
+
+            var response = await httpClient.GetAsync($"{relayUrl}/query-results");
+            if (!response.IsSuccessStatusCode)
+            {
+                TempData["ErrorMessage"] = $"Server returned {response.StatusCode}";
+                return RedirectToAction("Index", "Sql");
+            }
+
+            var html = await response.Content.ReadAsStringAsync();
+            ViewBag.QueryHtml = html;
+            return View();
+        }
     }
 }

@@ -36,8 +36,8 @@
                 <h5>Selected SQL Agent</h5>
                 <a href="@Url.Action("Index", "Home")" class="btn btn-sm btn-outline-primary">
                     <i class="bi bi-arrow-left"></i> Change Agent
-                </a>
-            </div>
+                </a>              
+            </div>        
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
@@ -70,11 +70,11 @@
     }
 
     <!-- Χρήσιμο για αποσφαλμάτωση, αφαιρέστε σε παραγωγή -->
-    <div class="alert alert-info mb-3">
+    <!-- <div class="alert alert-info mb-3">
         <strong>Debug info:</strong> Current settings from cookie:
         RelayServerUrl: @settings.RelayServerUrl,
         ApiKey: @settings.ApiKey
-    </div>
+    </div>  -->
 
   
 
@@ -156,6 +156,9 @@
             </div>
             <div class="card-footer">
                 <button type="submit" class="btn btn-primary">Execute Query</button>
+                <a class="btn btn-success" href="@Url.Action("QueryResults", "Sql")">
+                    <i class="bi bi-database-check"></i> View History
+                </a>
             </div>
         </div>
     </form>

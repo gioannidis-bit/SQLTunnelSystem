@@ -1,0 +1,41 @@
+﻿@{
+    ViewData["Title"] = "Query Results";
+}
+
+<div class="container py-4">
+    <h1 class="h4 mb-3">@ViewData["Title"]</h1>
+
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger">@TempData["ErrorMessage"]</div>
+    }
+    else
+    {
+        <div class="card shadow-sm mb-4">
+            <div class="card-body p-3">
+                <div class="table-responsive relay-html-container">
+                    @Html.Raw(ViewBag.QueryHtml)
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    <script>
+        // Όταν φορτώσει η σελίδα, βάζουμε Bootstrap classes στον πίνακα
+        document.addEventListener("DOMContentLoaded", function() {
+            var tbl = document.querySelector('.relay-html-container table');
+            if (tbl) {
+                tbl.classList.add('table', 'table-sm', 'table-striped', 'table-hover', 'align-middle');
+                // Προαιρετικά: αφαιρούμε inline widths/height για responsive
+                tbl.removeAttribute('width');
+            }
+                    tbl.querySelectorAll('th, td').forEach(c => {
+          c.classList.add('py-1', 'px-2', 'small');
+        });
+
+
+        });
+    </script>
+}

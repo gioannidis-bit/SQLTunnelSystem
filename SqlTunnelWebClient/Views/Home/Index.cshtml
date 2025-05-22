@@ -135,42 +135,42 @@
                 const agentId = button.data('agent-id');
                 const agents = @Html.Raw(JsonConvert.SerializeObject(Model.Agents));
 
-                const agent = agents.find(a => a.serviceId === agentId);
-                if (agent) {
-                    let content = `
-                        <div class="mb-3">
-                            <h6>Server Information</h6>
-                            <pre class="bg-light p-3">${agent.serverInfo}</pre>
-                        </div>
-                        <table class="table table-striped">
-                            <tr>
-                                <th>Service ID:</th>
-                                <td>${agent.serviceId}</td>
-                            </tr>
-                            <tr>
-                                <th>Display Name:</th>
-                                <td>${agent.displayName}</td>
-                            </tr>
-                            <tr>
-                                <th>Description:</th>
-                                <td>${agent.description}</td>
-                            </tr>
-                            <tr>
-                                <th>Version:</th>
-                                <td>${agent.version}</td>
-                            </tr>
-                            <tr>
-                                <th>Last Heartbeat:</th>
-                                <td>${new Date(agent.lastHeartbeat).toLocaleString()}</td>
-                            </tr>
-                            <tr>
-                                <th>Status:</th>
-                                <td>${agent.isActive ? '<span class="badge bg-success">Online</span>' : '<span class="badge bg-danger">Offline</span>'}</td>
-                            </tr>
-                        </table>
-                    `;
+                       const agent = agents.find(a => a.ServiceId === agentId);
+        if (agent) {
+            let content = `
+                <div class="mb-3">
+                    <h6>Server Information</h6>
+                    <pre class="bg-light p-3">${agent.ServerInfo}</pre>
+                </div>
+                <table class="table table-striped">
+                    <tr>
+                        <th>Service ID:</th>
+                        <td>${agent.ServiceId}</td>
+                    </tr>
+                    <tr>
+                        <th>Display Name:</th>
+                        <td>${agent.DisplayName}</td>
+                    </tr>
+                    <tr>
+                        <th>Description:</th>
+                        <td>${agent.Description}</td>
+                    </tr>
+                    <tr>
+                        <th>Version:</th>
+                        <td>${agent.Version}</td>
+                    </tr>
+                    <tr>
+                        <th>Last Heartbeat:</th>
+                        <td>${new Date(agent.LastHeartbeat).toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                        <th>Status:</th>
+                        <td>${agent.IsActive ? '<span class="badge bg-success">Online</span>' : '<span class="badge bg-danger">Offline</span>'}</td>
+                    </tr>
+                </table>
+            `;
 
-                    $('#agentDetailsContent').html(content);
+            $('#agentDetailsContent').html(content);
                 }
             });
         });
