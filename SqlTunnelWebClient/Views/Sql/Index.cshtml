@@ -213,88 +213,435 @@
 
 @section Scripts {
     <script>
-        // Toggle parameters section visibility
-        document.getElementById('showParameters').addEventListener('change', function() {
-            document.getElementById('parametersSection').style.display = this.checked ? 'block' : 'none';
-        });
-
-        // Handle NULL checkboxes
-        document.addEventListener('change', function(event) {
-            if (event.target.classList.contains('parameter-null-check')) {
-                const valueInput = event.target.closest('.row').querySelector('input[name$=".Value"]');
-                valueInput.disabled = event.target.checked;
-            }
-        });
-
-        // Parse and display JSON results with DataTables
+        // Wait for DOM to be fully loaded
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing JavaScript...');
 
-              $('#globalSearch').on('keyup', function() {
-                const table = $('#resultsTable').DataTable();
-                table.search(this.value).draw();
+            // Toggle parameters section visibility - DEFENSIVE CHECK
+            const showParametersElement = document.getElementById('showParameters');
+            const parametersSection = document.getElementById('parametersSection');
+
+            if (showParametersElement && parametersSection) {
+                showParametersElement.addEventListener('change', function() {
+                    parametersSection.style.display = this.checked ? 'block' : 'none';
+                });
+                console.log('Parameters toggle initialized');
+            } else {
+                console.log('Parameters elements not found - skipping parameters functionality');
+            }
+
+            // Handle NULL checkboxes - DEFENSIVE CHECK
+            document.addEventListener('change', function(event) {
+                if (event.target.classList.contains('parameter-null-check')) {
+                    const valueInput = event.target.closest('.row').querySelector('input[name$=".Value"]');
+                    if (valueInput) {
+                        valueInput.disabled = event.target.checked;
+                    }
+                }
             });
 
-               $('#pageSize').on('change', function() {
-                const table = $('#resultsTable').DataTable();
-                table.page.len(parseInt(this.value)).draw();
+            // Global search functionality - DEFENSIVE CHECK
+            const globalSearchElement = document.getElementById('globalSearch');
+            if (globalSearchElement) {
+                globalSearchElement.addEventListener('keyup', function() {
+                    const table = $('#resultsTable').DataTable();
+                    if (table) {
+                        table.search(this.value).draw();
+                    }
+                });
+            }
+
+            // Page size functionality - DEFENSIVE CHECK
+            const pageSizeElement = document.getElementById('pageSize');
+            if (pageSizeElement) {
+                pageSizeElement.addEventListener('change', function() {
+                    const table = $('#resultsTable').DataTable();
+                    if (table) {
+                        table.page.len(parseInt(this.value)).draw();
+                    }
+                });
+            }
+
+                const executeButton = document.querySelector('button[type="submit"]');
+        if (executeButton && executeButton.textContent.includes('Execute Query')) {
+            // Replace the existing button with streaming-only button
+            executeButton.type = 'button';
+            executeButton.className = 'btn btn-primary';
+            executeButton.innerHTML = '<i class="bi bi-broadcast"></i> Execute Query (Streaming)';
+            executeButton.onclick = executeQueryEnhanced;
+
+            console.log('Single streaming button configured');
+        }
+
+               const form = document.querySelector('form[action*="ExecuteQuery"]');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                console.log('Form submission prevented - using streaming only');
+                executeQueryEnhanced();
             });
+        }
 
-            const resultData = @Html.Raw(Model.Result != null ? JsonConvert.SerializeObject(Model.Result) : "null");
+            // Process existing results if any - SAFE JSON PARSING
+            try {
+                // Use a safer approach to get the result data
+                const resultElement = document.querySelector('[data-result]');
+                let resultData = null;
 
-            if (resultData) {
-                try {
-                    const data = JSON.parse(resultData);
+                if (resultElement && resultElement.dataset.result) {
+                    resultData = resultElement.dataset.result;
+                } else {
+                    // Fallback to model data if available
+        @if (Model.Result != null)
+        {
+                     <div id="resultDataContainer"
+                 data-result="@Html.Raw(Json.Serialize(Model.Result))"
+                 style="display: none;">
+            </div>
+        }
+                }
+
+                if (resultData) {
+                    console.log('Processing existing results...');
+                    let data;
+
+                    if (typeof resultData === 'string') {
+                        data = JSON.parse(resultData);
+                    } else {
+                        data = resultData;
+                    }
 
                     if (Array.isArray(data) && data.length > 0) {
                         displayTableDataWithDataTables(data);
                     } else if (typeof data === 'object' && data !== null) {
                         displayTableDataWithDataTables([data]);
                     } else {
-                        // If empty or not valid structure, just display as text
-                        const pre = document.createElement('pre');
-                        pre.textContent = JSON.stringify(data, null, 2);
-                        document.getElementById('resultsTableBody').innerHTML = '';
-                        document.getElementById('resultsTableHead').innerHTML = '';
-                        document.getElementById('resultsTableBody').appendChild(pre);
+                        console.log('No valid data to display');
                     }
-                } catch (e) {
-                    console.error("Error parsing JSON:", e);
-                    // If not valid JSON, just display as text
-                    const pre = document.createElement('pre');
-                    pre.textContent = resultData;
-                    document.getElementById('resultsTableBody').innerHTML = '';
-                    document.getElementById('resultsTableHead').innerHTML = '';
-                    document.getElementById('resultsTableBody').appendChild(pre);
                 }
+            } catch (e) {
+                console.error("Error processing existing results:", e);
+                // Don't throw error, just log it
             }
+
+            console.log('JavaScript initialization complete');
         });
 
+        // NEW: Enhanced executeQuery function to support streaming
+        async function executeQueryEnhanced() {
+          console.log('Streaming-only query execution started...');
+
+          const queryTextarea = document.querySelector('textarea[name="Query"]');
+          const query = queryTextarea ? queryTextarea.value.trim() : '';
+          const serviceId = '@(Model.ServiceId ?? "")';
+
+          if (!query) {
+              alert('Please enter a SQL query');
+              return;
+          }
+
+            // Clear previous results
+             const resultsTableHead = document.getElementById('resultsTableHead');
+            const resultsTableBody = document.getElementById('resultsTableBody');
+            if (resultsTableHead) resultsTableHead.innerHTML = '';
+            if (resultsTableBody) resultsTableBody.innerHTML = '';
+
+            try {
+                console.log('Using SignalR streaming for ALL queries...');
+                const resultData = await executeStreamingQuery(query, serviceId);
+
+                // Process streaming results
+                if (resultData) {
+                    try {
+                        const data = JSON.parse(resultData);
+                        if (Array.isArray(data) && data.length > 0) {
+                            displayTableDataWithDataTables(data);
+                            showSuccessMessage(`Query completed successfully! Received ${data.length} rows via streaming.`);
+                        } else if (typeof data === 'object' && data !== null) {
+                            displayTableDataWithDataTables([data]);
+                        } else {
+                            console.log('Unexpected data format:', data);
+                            displayRawResults(resultData);
+                        }
+                    } catch (e) {
+                        console.error("Error parsing streaming JSON:", e);
+                        displayRawResults(resultData);
+                    }
+                }
+            } catch (error) {
+                console.error('Streaming query execution error:', error);
+                showErrorMessage(`Error executing query: ${error.message}`);
+            }
+        }                    
+
+          async function executeStreamingQuery(query, serviceId) {
+        const relayServerUrl = '@(Model.RelayServerUrl ?? "")';
+        const apiKey = '@(Model.ApiKey ?? "")';
+
+        console.log('🔄 Streaming Debug Info:', {
+            relayServerUrl: relayServerUrl,
+            apiKey: apiKey ? 'Present' : 'Missing',
+            query: query.substring(0, 100) + '...',
+            serviceId: serviceId
+        });
+
+        if (!relayServerUrl || !apiKey) {
+            throw new Error('❌ Server configuration missing - RelayServerUrl or ApiKey not set');
+        }
+
+            // IMPORTANT: Check if streaming endpoint exists
+               const streamingUrl = `${relayServerUrl}/api/sql/execute-stream?query=${encodeURIComponent(query)}&serviceId=${serviceId || ''}`;
+        console.log('🎯 Attempting to connect to:', streamingUrl);
+
+        try {
+            // First, test if the endpoint is reachable
+            const testResponse = await fetch(`${relayServerUrl}/api/status`, {
+                headers: {
+                    'X-API-Key': apiKey
+                }
+            });
+
+            if (!testResponse.ok) {
+                throw new Error(`❌ Server not reachable - Status endpoint returned ${testResponse.status}`);
+            }
+
+            console.log('✅ Server is reachable, attempting streaming query...');
+
+            const response = await fetch(streamingUrl, {
+                headers: {
+                    'X-API-Key': apiKey
+                }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`❌ HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+            }
+
+            console.log('✅ Streaming response received, processing...');
+
+            if (!response.body) {
+                throw new Error('❌ Response body is not available for streaming');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let result = '';
+            let rowCount = 0;
+            let chunkCount = 0;
+
+            // Show progress indicator
+            updateStreamingProgress('🚀 Starting streaming query...', 0);
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    console.log('✅ Streaming completed after', chunkCount, 'chunks');
+                    break;
+                }
+
+                chunkCount++;
+                const chunk = decoder.decode(value, { stream: true });
+                result += chunk;
+
+                // Count rows for progress (rough estimate)
+                const newRowCount = (result.match(/},/g) || []).length;
+                if (newRowCount > rowCount) {
+                    rowCount = newRowCount;
+                    updateStreamingProgress(`📊 Streaming data... ${rowCount} rows received (${chunkCount} chunks)`, rowCount);
+                }
+
+                // Log progress every 100 chunks
+                if (chunkCount % 100 === 0) {
+                    console.log(`📈 Received ${chunkCount} chunks, ${rowCount} rows so far`);
+                }
+            }
+
+            updateStreamingProgress(`✅ Processing results... ${rowCount} rows received`, rowCount);
+            console.log('📊 Final result length:', result.length, 'characters');
+            return result;
+
+        } catch (error) {
+            console.error('❌ Streaming error details:', {
+                error: error.message,
+                stack: error.stack,
+                url: streamingUrl
+            });
+
+            updateStreamingProgress(`❌ Streaming error: ${error.message}`, 0);
+
+            // Try to provide more specific error information
+            if (error.message.includes('Failed to fetch')) {
+                throw new Error(`❌ Cannot connect to streaming endpoint. Check if SqlRelayServer is running and streaming endpoint is configured. URL: ${streamingUrl}`);
+            } else {
+                throw error;
+            }
+        }
+    }
+
+        // NEW: Update progress during streaming
+           function updateStreamingProgress(message, rowCount) {
+        let progressDiv = document.getElementById('streamingProgress');
+        if (!progressDiv) {
+            progressDiv = document.createElement('div');
+            progressDiv.id = 'streamingProgress';
+            progressDiv.className = 'alert alert-info';
+            progressDiv.style.display = 'none';
+
+            // Insert before results table
+            const resultsCard = document.querySelector('.card.mt-4');
+            if (resultsCard) {
+                resultsCard.parentNode.insertBefore(progressDiv, resultsCard);
+            } else {
+                const container = document.querySelector('.container');
+                if (container) {
+                    container.appendChild(progressDiv);
+                }
+            }
+        }
+
+        // ✅ Enhanced progress display with emojis
+        const isError = message.includes('❌') || message.includes('error');
+        const isComplete = message.includes('✅') || message.includes('Processing results');
+
+        progressDiv.innerHTML = `
+            <div class="d-flex align-items-center">
+                ${!isError && !isComplete ? `
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                ` : ''}
+                <span>${message}</span>
+            </div>
+        `;
+
+        // Change color based on status
+        progressDiv.className = `alert ${isError ? 'alert-danger' : isComplete ? 'alert-success' : 'alert-info'}`;
+        progressDiv.style.display = 'block';
+
+        // Hide after completion
+        if (isError || isComplete) {
+            setTimeout(() => {
+                progressDiv.style.display = 'none';
+            }, isError ? 5000 : 2000);
+        }
+    }
+
+             // Add success/error message functions
+               function showSuccessMessage(message) {
+            // Remove any existing alerts first
+            const existingAlerts = document.querySelectorAll('.alert-success, .alert-danger');
+            existingAlerts.forEach(alert => {
+                if (alert.parentNode) {
+                    alert.parentNode.removeChild(alert);
+                }
+            });
+
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-success alert-dismissible fade show mt-3';
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+
+            // SAFER insertion - append to container instead of insertBefore
+            const container = document.querySelector('.container');
+            if (container) {
+                container.appendChild(alertDiv);
+
+                // Scroll to the alert
+                alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                // Fallback: append to body
+                document.body.appendChild(alertDiv);
+            }
+
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                if (alertDiv && alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 5000);
+        }
+
+               function showErrorMessage(message) {
+            // Remove any existing alerts first
+            const existingAlerts = document.querySelectorAll('.alert-success, .alert-danger');
+            existingAlerts.forEach(alert => {
+                if (alert.parentNode) {
+                    alert.parentNode.removeChild(alert);
+                }
+            });
+
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-danger alert-dismissible fade show mt-3';
+            alertDiv.innerHTML = `
+                <strong>Error:</strong> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+
+            // SAFER insertion - append to container instead of insertBefore
+            const container = document.querySelector('.container');
+            if (container) {
+                container.appendChild(alertDiv);
+
+                // Scroll to the alert
+                alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                // Fallback: append to body
+                document.body.appendChild(alertDiv);
+            }
+
+            // Keep error messages longer - 10 seconds
+            setTimeout(() => {
+                if (alertDiv && alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 10000);
+        }
+
+        // Display raw results when JSON parsing fails
+        function displayRawResults(data) {
+            const resultsTableBody = document.getElementById('resultsTableBody');
+            const resultsTableHead = document.getElementById('resultsTableHead');
+
+            if (resultsTableHead) resultsTableHead.innerHTML = '';
+            if (resultsTableBody) {
+                resultsTableBody.innerHTML = `<tr><td colspan="100%"><pre>${data}</pre></td></tr>`;
+            }
+        }
+
+        // Existing displayTableDataWithDataTables function
         function displayTableDataWithDataTables(data) {
             if (!data || data.length === 0) return;
 
             const table = $('#resultsTable');
+            if (!table.length) {
+                console.error('Results table not found');
+                return;
+            }
 
-            // Δημιουργία στηλών πίνακα από τα keys του πρώτου αντικειμένου
+            // Create columns from first object keys
             const columns = Object.keys(data[0]).map(key => ({
                 title: key,
                 data: key
             }));
 
-            // Αν υπάρχει ήδη ένα DataTable instance, το καταστρέφουμε
+            // Destroy existing DataTable if it exists
             if ($.fn.DataTable.isDataTable(table)) {
                 table.DataTable().destroy();
             }
 
-            // Καθαρισμός του πίνακα
+            // Clear the table
             table.empty();
 
-            // Δημιουργία του DataTable
+            // Create the DataTable
             const dataTable = table.DataTable({
                 data: data,
                 columns: columns,
-                pageLength: 10,  // Αριθμός γραμμών ανά σελίδα
+                pageLength: 10,
                 lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                dom: 'Blfrtip',  // B = buttons, l = length menu, f = filter, r = processing, t = table, i = info, p = pagination
+                dom: 'Blfrtip',
                 buttons: [
                     {
                         extend: 'collection',
@@ -304,44 +651,14 @@
                             {
                                 extend: 'excelHtml5',
                                 text: 'Excel',
-                                exportOptions: {
-                                    columns: ':visible'
-                                },
+                                exportOptions: { columns: ':visible' },
                                 title: 'SQL Query Results - ' + new Date().toLocaleString(),
-                                className: 'dropdown-item'
-                            },
-                            {
-                                extend: 'pdfHtml5',
-                                text: 'PDF',
-                                exportOptions: {
-                                    columns: ':visible'
-                                },
-                                title: 'SQL Query Results - ' + new Date().toLocaleString(),
-                                className: 'dropdown-item',
-                                orientation: 'landscape'
-                            },
-                            {
-                                extend: 'copyHtml5',
-                                text: 'Copy',
-                                exportOptions: {
-                                    columns: ':visible'
-                                },
                                 className: 'dropdown-item'
                             },
                             {
                                 extend: 'csvHtml5',
                                 text: 'CSV',
-                                exportOptions: {
-                                    columns: ':visible'
-                                },
-                                className: 'dropdown-item'
-                            },
-                            {
-                                extend: 'print',
-                                text: 'Print',
-                                exportOptions: {
-                                    columns: ':visible'
-                                },
+                                exportOptions: { columns: ':visible' },
                                 className: 'dropdown-item'
                             }
                         ]
@@ -350,35 +667,32 @@
                 language: {
                     search: "Filter:",
                     lengthMenu: "Show _MENU_ entries",
-                    info: "Showing _START_ to _END_ of _TOTAL_ entries",
-                    paginate: {
-                        first: "First",
-                        last: "Last",
-                        next: "Next",
-                        previous: "Previous"
-                    }
+                    info: "Showing _START_ to _END_ of _TOTAL_ entries"
                 },
                 initComplete: function() {
-                    // Μετακίνηση των κουμπιών εξαγωγής στην προσαρμοσμένη περιοχή
-                    $('.dt-buttons').detach().appendTo('.export-buttons');
+                    // Move export buttons to custom area
+                    const exportButtons = $('.dt-buttons');
+                    const exportArea = $('.export-buttons');
+                    if (exportButtons.length && exportArea.length) {
+                        exportButtons.detach().appendTo(exportArea);
+                    }
                 }
             });
 
-            // Προσθήκη προηγμένου φίλτρου για κάθε στήλη
-            $('#resultsTable thead tr').clone(true).appendTo('#resultsTable thead');
-            $('#resultsTable thead tr:eq(1) th').each(function(i) {
-                const title = $(this).text();
-                $(this).html('<input type="text" class="form-control form-control-sm" placeholder="Filter ' + title + '" />');
+            // Add column filters
+            if ($('#resultsTable thead tr').length === 1) {
+                $('#resultsTable thead tr').clone(true).appendTo('#resultsTable thead');
+                $('#resultsTable thead tr:eq(1) th').each(function(i) {
+                    const title = $(this).text();
+                    $(this).html('<input type="text" class="form-control form-control-sm" placeholder="Filter ' + title + '" />');
 
-                $('input', this).on('keyup change', function() {
-                    if (dataTable.column(i).search() !== this.value) {
-                        dataTable
-                            .column(i)
-                            .search(this.value)
-                            .draw();
-                    }
+                    $('input', this).on('keyup change', function() {
+                        if (dataTable.column(i).search() !== this.value) {
+                            dataTable.column(i).search(this.value).draw();
+                        }
+                    });
                 });
-            });
+            }
         }
     </script>
 }

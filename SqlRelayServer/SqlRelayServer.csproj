@@ -24,6 +24,7 @@
     <PackageReference Include="Microsoft.Data.Tools.TdsLib" Version="0.2.2089.23" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+	<PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />	  
   </ItemGroup>
 
 </Project>

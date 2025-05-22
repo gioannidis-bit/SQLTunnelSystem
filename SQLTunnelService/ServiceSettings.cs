@@ -10,5 +10,12 @@
         public string DisplayName { get; set; } = "SQL Tunnel Service";
         public string Description { get; set; } = "SQL Server Tunnel";
         public string Version { get; set; } = "1.0.0";
+
+
+        // NEW: Memory management settings
+        public int StreamingBatchSize { get; set; } = 1000;
+        public int MaxRowsPerQuery { get; set; } = 100000;
+        public bool EnableMemoryOptimization { get; set; } = true;
+        public int GCAfterRowsThreshold { get; set; } = 10000;
     }
 }
